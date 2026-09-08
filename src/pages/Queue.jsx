@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { timeAgo, initials, avatarColor } from '../lib/utils'
 import { NavBar } from './Kiosk'
-import { fireConfetti } from '../lib/confetti'
+import { getEventId } from '../components/AuthGate'
+
+const BUCKET = 'pnm-photos'
+const SIGNED_TTL = 60 * 60   // 1 hour
 
 function Toast({ toasts }) {
   return (
@@ -20,64 +23,95 @@ function Toast({ toasts }) {
 }
 
 export default function Queue() {
-  const [checkins, setCheckins] = useState([])
+  const eventId = getEventId()
+  const [rows, setRows]         = useState([])
+  const [signed, setSigned]     = useState({})   // photo_path -> signed url
   const [loading, setLoading]   = useState(true)
   const [toasts, setToasts]     = useState([])
   const [newIds, setNewIds]     = useState(new Set())
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const prevIds = useRef(new Set())
   const navigate = useNavigate()
 
+  const fullName = p => p ? `${p.first_name} ${p.last_name}` : '?'
+
   async function load() {
-    const { data } = await supabase
-      .from('checkins')
-      .select('id, rushee_id, checked_in_at, flagged, photo_url, rushees(name, major, year, id)')
-      .order('checked_in_at', { ascending: true })
-    setCheckins(data || [])
+    if (!eventId) { setLoading(false); return [] }
+    const { data, error } = await supabase
+      .from('attendance')
+      .select('id, pnm_id, signed_in_at, station_id, pnms(id, psu_id, first_name, last_name, major, year, psu_id_unverified, photo_path)')
+      .eq('event_id', eventId)
+      .order('signed_in_at', { ascending: true })
+
+    if (error) { console.error('queue load failed', error); setLoading(false); return [] }
+    const list = data || []
+    setRows(list)
     setLoading(false)
-    return data || []
+
+    // Private bucket: mint short-lived signed URLs for the thumbnails.
+    const paths = list.map(r => r.pnms?.photo_path).filter(Boolean)
+    if (paths.length > 0) {
+      const { data: urls, error: sErr } = await supabase.storage
+        .from(BUCKET).createSignedUrls(paths, SIGNED_TTL)
+      if (sErr) console.error('signing failed', sErr)
+      else {
+        const map = {}
+        for (const u of urls || []) if (u.path && u.signedUrl) map[u.path] = u.signedUrl
+        setSigned(prev => ({ ...prev, ...map }))
+      }
+    }
+    return list
   }
 
   useEffect(() => {
     load()
-    const channel = supabase.channel('checkins-queue')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins' }, async payload => {
-        const data = await load()
-        const newEntry = data.find(c => c.rushee_id === payload.new.rushee_id)
-        if (newEntry?.rushees) {
-          const r = newEntry.rushees
-          const toastId = Date.now()
-          setToasts(prev => [...prev, { id: toastId, name: r.name, major: r.major, year: r.year }])
-          setNewIds(prev => new Set([...prev, payload.new.rushee_id]))
-          setTimeout(() => setNewIds(prev => { const s = new Set(prev); s.delete(payload.new.rushee_id); return s }), 1000)
-          setTimeout(() => setToasts(prev => prev.map(t => t.id === toastId ? { ...t, exiting: true } : t)), 3500)
-          setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3900)
-        }
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, () => load())
+    if (!eventId) return
+    const channel = supabase.channel('attendance-queue')
+      .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'attendance', filter: `event_id=eq.${eventId}` },
+          async payload => {
+            const list = await load()
+            const entry = list.find(r => r.pnm_id === payload.new.pnm_id)
+            if (entry?.pnms) {
+              const p = entry.pnms
+              const toastId = Date.now()
+              setToasts(prev => [...prev, { id: toastId, name: fullName(p), major: p.major, year: p.year }])
+              setNewIds(prev => new Set([...prev, payload.new.pnm_id]))
+              setTimeout(() => setNewIds(prev => { const s = new Set(prev); s.delete(payload.new.pnm_id); return s }), 1000)
+              setTimeout(() => setToasts(prev => prev.map(t => t.id === toastId ? { ...t, exiting: true } : t)), 3500)
+              setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3900)
+            }
+          })
+      .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'attendance', filter: `event_id=eq.${eventId}` },
+          () => load())
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [])
+  }, [eventId])
 
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen()
-      setIsFullscreen(true)
+      document.documentElement.requestFullscreen(); setIsFullscreen(true)
     } else {
-      document.exitFullscreen()
-      setIsFullscreen(false)
+      document.exitFullscreen(); setIsFullscreen(false)
     }
   }
 
-  async function deleteCheckin(checkinId, rusheeId, e) {
+  // Removes the check-in for THIS event only. The pnms row and any photo are
+  // left alone -- the person still exists and may have attended other nights.
+  async function deleteAttendance(attendanceId, e) {
     e.stopPropagation()
-    if (!confirm('Remove this person from the check-in list?')) return
-    await supabase.from('checkins').delete().eq('id', checkinId)
+    if (!confirm('Remove this person from this event\'s check-in list?')) return
+    const { error } = await supabase.from('attendance').delete().eq('id', attendanceId)
+    if (error) alert('Remove failed: ' + error.message)
     load()
   }
 
-  const waiting = checkins.filter(c => !c.photo_url)
-  const done    = checkins.filter(c =>  c.photo_url)
+  const waiting = rows.filter(r => !r.pnms?.photo_path)
+  const done    = rows.filter(r =>  r.pnms?.photo_path)
+
+  if (!eventId) {
+    return <div className="page"><div className="content">No event selected. Reload to set one.</div></div>
+  }
 
   return (
     <div className="page">
@@ -87,9 +121,8 @@ export default function Queue() {
 
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
           <div className="stat-grid" style={{ flex:1, marginBottom:0 }}>
-            <div className="stat-card"><div className="stat-num">{waiting.length}</div><div className="stat-label">Waiting</div></div>
-            <div className="stat-card"><div className="stat-num">{done.length}</div><div className="stat-label">Photos taken</div></div>
-            <div className="stat-card"><div className="stat-num">{checkins.length}</div><div className="stat-label">Total checked in</div></div>
+            <div className="stat-card"><div className="stat-num">{rows.length}</div><div className="stat-label">Checked in</div></div>
+            <div className="stat-card"><div className="stat-num">{waiting.length}</div><div className="stat-label">Waiting for photo</div></div>
           </div>
           <button className="fullscreen-btn" onClick={toggleFullscreen} style={{ marginLeft:12, whiteSpace:'nowrap', background:'var(--navy)', color:'rgba(255,255,255,0.7)', border:'1px solid rgba(255,255,255,0.15)', padding:'8px 12px', borderRadius:'var(--radius)', fontSize:12, fontWeight:500 }}>
             {isFullscreen ? '⤡ Exit' : '⤢ Fullscreen'}
@@ -98,7 +131,7 @@ export default function Queue() {
 
         {loading ? (
           <div style={{ textAlign:'center', padding:40, color:'var(--text3)', fontSize:13 }}>Loading...</div>
-        ) : checkins.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div style={{ textAlign:'center', padding:48, color:'var(--text3)', fontSize:13 }}>
             No one checked in yet
           </div>
@@ -107,35 +140,35 @@ export default function Queue() {
             {waiting.length > 0 && (
               <>
                 <div className="section-label">Waiting for photo</div>
-                {waiting.map((c, i) => {
-                  const r = c.rushees
+                {waiting.map((r, i) => {
+                  const p = r.pnms
                   const isNext = i === 0
-                  const [abg, atxt] = avatarColor(c.rushee_id)
-                  const isNew = newIds.has(c.rushee_id)
+                  const [abg, atxt] = avatarColor(r.pnm_id)
+                  const isNew = newIds.has(r.pnm_id)
                   return (
-                    <div key={c.id} className={`queue-item ${isNext ? 'is-next' : ''} ${isNew ? 'new-entry' : ''}`}
-                      onClick={() => navigate(`/camera?id=${c.rushee_id}`)}
+                    <div key={r.id} className={`queue-item ${isNext ? 'is-next' : ''} ${isNew ? 'new-entry' : ''}`}
+                      onClick={() => navigate(`/camera?id=${r.pnm_id}`)}
                       style={{ cursor:'pointer' }}>
                       <div style={{ minWidth:24, textAlign:'center', fontSize:15, fontWeight:700, color: isNext ? 'var(--gold)' : 'var(--text3)' }}>
                         {i + 1}
                       </div>
                       <div className="avatar" style={{ background: isNext ? 'rgba(245,184,0,0.15)' : abg, color: isNext ? 'var(--gold)' : atxt, border: isNext ? '2px solid var(--gold)' : 'none' }}>
-                        {initials(r?.name || '?')}
+                        {initials(fullName(p))}
                       </div>
                       <div style={{ flex:1 }}>
                         <div style={{ fontWeight:600, color: isNext ? 'var(--gold)' : 'var(--text)', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-                          {r?.name}
+                          {fullName(p)}
                           {isNext && <span style={{ fontSize:11, fontWeight:400, color:'rgba(245,184,0,0.7)' }}>— tap to photograph</span>}
-                          {c.flagged && <span className="pill pill-amber">ID flagged</span>}
+                          {p?.psu_id_unverified && <span className="pill pill-amber">ID flagged</span>}
                         </div>
                         <div style={{ fontSize:12, color: isNext ? 'rgba(255,255,255,0.6)' : 'var(--text2)', marginTop:2 }}>
-                          {c.rushee_id} · {r?.major} · {r?.year}
+                          {p?.psu_id} · {p?.major} · {p?.year}
                         </div>
                       </div>
                       <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                        <span style={{ fontSize:12, color: isNext ? 'rgba(255,255,255,0.4)' : 'var(--text3)' }}>{timeAgo(c.checked_in_at)}</span>
+                        <span style={{ fontSize:12, color: isNext ? 'rgba(255,255,255,0.4)' : 'var(--text3)' }}>{timeAgo(r.signed_in_at)}</span>
                         {isNext && <span className="pill pill-gold">Take photo →</span>}
-                        <button className="delete-btn" onClick={e => deleteCheckin(c.id, c.rushee_id, e)} title="Remove">✕</button>
+                        <button className="delete-btn" onClick={e => deleteAttendance(r.id, e)} title="Remove">✕</button>
                       </div>
                     </div>
                   )
@@ -146,23 +179,24 @@ export default function Queue() {
             {done.length > 0 && (
               <>
                 <div className="section-label" style={{ marginTop:8 }}>Photos taken</div>
-                {done.map(c => {
-                  const r = c.rushees
-                  const [abg, atxt] = avatarColor(c.rushee_id)
+                {done.map(r => {
+                  const p = r.pnms
+                  const [abg, atxt] = avatarColor(r.pnm_id)
+                  const url = signed[p.photo_path]
                   return (
-                    <div key={c.id} className="queue-item is-done">
+                    <div key={r.id} className="queue-item is-done">
                       <div style={{ minWidth:24, textAlign:'center', fontSize:15, color:'var(--green-text)' }}>✓</div>
-                      {c.photo_url
-                        ? <img src={c.photo_url} alt={r?.name} style={{ width:38, height:38, borderRadius:'50%', objectFit:'cover', flexShrink:0 }} />
-                        : <div className="avatar" style={{ background:abg, color:atxt }}>{initials(r?.name || '?')}</div>
+                      {url
+                        ? <img src={url} alt={fullName(p)} style={{ width:38, height:38, borderRadius:'50%', objectFit:'cover', flexShrink:0 }} />
+                        : <div className="avatar" style={{ background:abg, color:atxt }}>{initials(fullName(p))}</div>
                       }
                       <div style={{ flex:1 }}>
-                        <div style={{ fontWeight:600, color:'var(--text)' }}>{r?.name}</div>
-                        <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>{r?.major} · {r?.year}</div>
+                        <div style={{ fontWeight:600, color:'var(--text)' }}>{fullName(p)}</div>
+                        <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>{p?.major} · {p?.year}</div>
                       </div>
                       <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                         <span className="pill pill-green">Done</span>
-                        <button className="delete-btn" onClick={e => deleteCheckin(c.id, c.rushee_id, e)} title="Remove">✕</button>
+                        <button className="delete-btn" onClick={e => deleteAttendance(r.id, e)} title="Remove">✕</button>
                       </div>
                     </div>
                   )
