@@ -169,6 +169,7 @@ export default function Kiosk() {
   const [submitting, setSubmitting] = useState(false);
   const [idError, setIdError] = useState("");
   const [idWarning, setIdWarning] = useState(false); // soft: unrecognised shape
+  const [offline, setOffline] = useState(false); // RPC unreachable this attempt
   const [canonical, setCanonical] = useState(null);
   const [existingPnm, setExistingPnm] = useState(null);
 
@@ -219,6 +220,7 @@ export default function Kiosk() {
     setStep("id");
     setIdError("");
     setIdWarning(false);
+    setOffline(false);
     setCanonical(null);
     setExistingPnm(null);
     setSubmitting(false);
@@ -226,15 +228,19 @@ export default function Kiosk() {
 
   // Canonicalisation is done by the database function, never re-implemented
   // here. One regex exists in the system and it lives in Postgres.
+  // Returns { canon, unreachable }. An unreachable RPC is NOT a malformed ID.
+  // Collapsing the two flags every person who signs in during a network blip.
   async function canonicalize(raw) {
-    const { data, error } = await supabase.rpc("normalize_psu_id_soft", {
-      raw,
-    });
-    if (error) {
-      console.error("normalize rpc failed", error);
-      return null;
+    try {
+      const { data, error } = await supabase.rpc("normalize_psu_id_soft", {
+        raw,
+      });
+      if (error) throw error;
+      return { canon: data || null, unreachable: false };
+    } catch (e) {
+      console.error("normalize rpc failed", e);
+      return { canon: null, unreachable: true };
     }
-    return data;
   }
 
   async function handleIdNext() {
@@ -245,9 +251,17 @@ export default function Kiosk() {
     }
     setIdError("");
 
-    const canon = await canonicalize(raw);
+    const { canon, unreachable } = await canonicalize(raw);
     setCanonical(canon);
-    setIdWarning(!canon);
+    setIdWarning(!canon && !unreachable);
+    setOffline(unreachable);
+
+    if (unreachable) {
+      // Cannot canonicalise and cannot look up. Collect full details rather than
+      // flagging the ID, and let the runner know why we are asking.
+      setStep("form");
+      return;
+    }
 
     if (!canon) {
       // Unrecognised shape. Still allowed through — it will be stored flagged
@@ -262,7 +276,9 @@ export default function Kiosk() {
       .eq("psu_id", canon)
       .maybeSingle();
     if (error) {
-      setIdError(error.message);
+      console.error("pnm lookup failed", error);
+      setOffline(true);
+      setStep("form");
       return;
     }
 
@@ -471,6 +487,14 @@ export default function Kiosk() {
               </div>
             )}
 
+            {offline && !idWarning && (
+              <div
+                style={{ fontSize: 13, color: "var(--text2)", marginTop: 6 }}
+              >
+                Offline. Enter their details in full — the ID is verified when
+                the network returns.
+              </div>
+            )}
             {idWarning && (
               <div
                 style={{
