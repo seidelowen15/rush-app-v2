@@ -5,6 +5,8 @@ import {
   getEventId,
   getEventLabel,
   getStationId,
+  getSide,
+  getSideLabel,
   clearEvent,
 } from "../components/AuthGate";
 
@@ -72,7 +74,7 @@ const MAJORS = [
   "Other",
 ];
 
-export function NavBar({ waitingCount }) {
+export function NavBar({ waiting = {} }) {
   const loc = useLocation();
   return (
     <div className="topbar">
@@ -90,7 +92,7 @@ export function NavBar({ waitingCount }) {
           }
         }}
       >
-        {getEventLabel()} · {getStationId()}
+        {getEventLabel()} · {getSideLabel()} · {getStationId()}{" "}
       </div>
       <Link
         to="/kiosk"
@@ -98,13 +100,16 @@ export function NavBar({ waitingCount }) {
       >
         Sign-in kiosk
       </Link>
-      <Link
-        to="/queue"
-        className={`nav-link ${loc.pathname === "/queue" ? "active" : ""}`}
-      >
-        Photo queue
-        {waitingCount > 0 && <span className="badge">{waitingCount}</span>}
-      </Link>
+      {["left", "right"].map((s) => (
+        <Link
+          key={s}
+          to={`/queue/${s}`}
+          className={`nav-link ${loc.pathname === `/queue/${s}` ? "active" : ""}`}
+        >
+          {s === "left" ? "Left queue" : "Right queue"}
+          {waiting[s] > 0 && <span className="badge">{waiting[s]}</span>}
+        </Link>
+      ))}
       <button
         className="nav-link"
         style={{
@@ -117,6 +122,7 @@ export function NavBar({ waitingCount }) {
           if (!confirm("Sign this station out?")) return;
           clearEvent();
           localStorage.removeItem("kiosk_station_id");
+          localStorage.removeItem("kiosk_side");
           await supabase.auth.signOut();
           location.reload();
         }}
@@ -150,12 +156,13 @@ function StatCard({ label, value }) {
 export default function Kiosk() {
   const eventId = getEventId();
   const stationId = getStationId();
+  const side = getSide();
 
   // pnm_id values already checked in TO THIS EVENT. Scoped per event, so a
   // returning PNM can check in again on a later night.
   const [attendedIds, setAttendedIds] = useState(new Set());
   const [checkedInCount, setCheckedInCount] = useState(0);
-  const [waitingCount, setWaitingCount] = useState(0);
+  const [waiting, setWaiting] = useState({ left: 0, right: 0 });
 
   const [psuId, setPsuId] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -198,7 +205,7 @@ export default function Kiosk() {
   async function load() {
     const { data, error } = await supabase
       .from("attendance")
-      .select("pnm_id, pnms(photo_path)")
+      .select("pnm_id, side, pnms(photo_path)")
       .eq("event_id", eventId);
     if (error) {
       console.error("load failed", error);
@@ -207,7 +214,11 @@ export default function Kiosk() {
     const rows = data || [];
     setAttendedIds(new Set(rows.map((r) => r.pnm_id)));
     setCheckedInCount(rows.length);
-    setWaitingCount(rows.filter((r) => !r.pnms || !r.pnms.photo_path).length);
+    const unphotographed = rows.filter((r) => !r.pnms || !r.pnms.photo_path);
+    setWaiting({
+      left: unphotographed.filter((r) => r.side === "left").length,
+      right: unphotographed.filter((r) => r.side === "right").length,
+    });
   }
 
   function resetForm() {
@@ -299,6 +310,7 @@ export default function Kiosk() {
       pnm_id: pnmId,
       event_id: eventId,
       station_id: stationId,
+      side,
     });
     if (error) {
       if (error.code === "23505")
@@ -414,14 +426,14 @@ export default function Kiosk() {
 
   return (
     <div className="page">
-      <NavBar waitingCount={waitingCount} />
+      <NavBar waiting={waiting} />
       <div
         className="content"
         style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}
       >
         <div className="stat-grid">
           <StatCard label="Checked in" value={checkedInCount} />
-          <StatCard label="Waiting for photo" value={waitingCount} />
+          <StatCard label="Waiting for photo" value={waiting[side] || 0} />
         </div>
 
         {flash && (

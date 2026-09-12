@@ -3,7 +3,7 @@ import "./index.css";
 import Kiosk from "./pages/Kiosk";
 import Queue from "./pages/Queue";
 import Camera from "./pages/Camera";
-//import Watch from "./pages/Watch";
+
 import AuthGate from "./components/AuthGate";
 
 export default function App() {
@@ -13,9 +13,13 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/kiosk" replace />} />
           <Route path="/kiosk" element={<Kiosk />} />
-          <Route path="/queue" element={<Queue />} />
+          <Route
+            path="/queue"
+            element={<Navigate to="/queue/left" replace />}
+          />
+          <Route path="/queue/left" element={<Queue side="left" />} />
+          <Route path="/queue/right" element={<Queue side="right" />} />
           <Route path="/camera" element={<Camera />} />
-          {/* <Route path="/watch" element={<Watch />} /> */}
         </Routes>
       </AuthGate>
     </BrowserRouter>

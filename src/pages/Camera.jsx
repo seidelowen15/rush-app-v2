@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase";
 import { initials, avatarColor } from "../lib/utils";
 import { NavBar } from "./Kiosk";
 
-import { getEventId } from "../components/AuthGate";
+import { getEventId, getSide } from "../components/AuthGate";
 
 const BUCKET = "pnm-photos";
 
@@ -39,6 +39,7 @@ export default function Camera() {
           "id, pnm_id, signed_in_at, pnms!inner(id, psu_id, first_name, last_name, major, year, psu_id_unverified, photo_path)",
         )
         .eq("event_id", eventId)
+        .eq("side", getSide())
         .is("pnms.photo_path", null)
         .order("signed_in_at", { ascending: true });
 
@@ -152,7 +153,7 @@ export default function Camera() {
         setSuccessName(null);
         const remaining = waiting.filter((r) => r.pnm_id !== pnm.id);
         if (remaining.length > 0) navigate(`/camera?id=${remaining[0].pnm_id}`);
-        else navigate("/queue");
+        else navigate(`/queue/${getSide()}`);
       }, 1800);
     } catch (err) {
       alert("Save failed: " + (err.message || "unknown error"));
@@ -173,7 +174,7 @@ export default function Camera() {
   if (!pnm && waiting.length === 0) {
     return (
       <div className="page">
-        <NavBar waitingCount={0} />
+        <NavBar waiting={{}} />
         <div
           className="content"
           style={{
@@ -199,7 +200,7 @@ export default function Camera() {
           >
             All photos taken, or no one has checked in yet.
           </div>
-          <button className="btn btn-navy" onClick={() => navigate("/queue")}>
+          <button className="btn btn-navy" onClick={() => navigate(`/queue/${getSide()}`)}>
             Back to queue
           </button>
         </div>
@@ -209,7 +210,7 @@ export default function Camera() {
 
   return (
     <div className="page">
-      <NavBar waitingCount={waiting.length} />
+      <NavBar waiting={{ [getSide()]: waiting.length }} />
       <div
         className="content"
         style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}

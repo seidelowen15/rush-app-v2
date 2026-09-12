@@ -34,9 +34,9 @@ function Toast({ toasts }) {
   );
 }
 
-export default function Queue() {
+export default function Queue({ side }) {
   const eventId = getEventId();
-  const [rows, setRows] = useState([]);
+  const [allRows, setAllRows] = useState([]);
   const [signed, setSigned] = useState({}); // photo_path -> signed url
   const signedExp = useRef({}); // photo_path -> epoch ms expiry
   const [loading, setLoading] = useState(true);
@@ -46,6 +46,7 @@ export default function Queue() {
   const navigate = useNavigate();
 
   const fullName = (p) => (p ? `${p.first_name} ${p.last_name}` : "?");
+  const rows = allRows.filter((r) => r.side === side);
 
   async function load() {
     if (!eventId) {
@@ -55,7 +56,7 @@ export default function Queue() {
     const { data, error } = await supabase
       .from("attendance")
       .select(
-        "id, pnm_id, signed_in_at, station_id, pnms(id, psu_id, first_name, last_name, major, year, psu_id_unverified, photo_path)",
+        "id, pnm_id, signed_in_at, station_id, side, pnms(id, psu_id, first_name, last_name, major, year, psu_id_unverified, photo_path)",
       )
       .eq("event_id", eventId)
       .order("signed_in_at", { ascending: true });
@@ -66,7 +67,7 @@ export default function Queue() {
       return [];
     }
     const list = data || [];
-    setRows(list);
+    setAllRows(list);
     setLoading(false);
 
     // Private bucket: mint short-lived signed URLs for the thumbnails. Only sign
@@ -111,6 +112,7 @@ export default function Queue() {
         },
         async (payload) => {
           const list = await load();
+          if (payload.new.side !== side) return;
           const entry = list.find((r) => r.pnm_id === payload.new.pnm_id);
           if (entry?.pnms) {
             const p = entry.pnms;
@@ -172,7 +174,7 @@ export default function Queue() {
       clearInterval(poll);
       supabase.removeChannel(channel);
     };
-  }, [eventId]);
+  }, [eventId, side]);
 
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -210,7 +212,15 @@ export default function Queue() {
 
   return (
     <div className="page">
-      <NavBar waitingCount={waiting.length} />
+      <NavBar
+        waiting={{
+          left: allRows.filter((r) => r.side === "left" && !r.pnms?.photo_path)
+            .length,
+          right: allRows.filter(
+            (r) => r.side === "right" && !r.pnms?.photo_path,
+          ).length,
+        }}
+      />
       <Toast toasts={toasts} />
       <div
         className="content"

@@ -9,6 +9,7 @@ import { supabase } from "../lib/supabase";
 const EVENT_KEY = "kiosk_event_id";
 const EVENT_LABEL = "kiosk_event_label";
 const STATION_KEY = "kiosk_station_id";
+const SIDE_KEY = "kiosk_side";
 const TIER_OK_KEY = "kiosk_tier_verified_v1";
 
 export function getEventId() {
@@ -19,6 +20,13 @@ export function getEventLabel() {
 }
 export function getStationId() {
   return localStorage.getItem(STATION_KEY) || "unnamed";
+}
+export function getSide() {
+  return localStorage.getItem(SIDE_KEY);
+}
+export function getSideLabel() {
+  const s = getSide();
+  return s === "left" ? "Left" : s === "right" ? "Right" : "No side";
 }
 
 export function clearEvent() {
@@ -75,6 +83,7 @@ export default function AuthGate({ children }) {
   const [station, setStation] = useState(
     getStationId() === "unnamed" ? "" : getStationId(),
   );
+  const [side, setSide] = useState(getSide() || "");
 
   useEffect(() => {
     boot();
@@ -132,7 +141,7 @@ export default function AuthGate({ children }) {
 
     localStorage.setItem(TIER_OK_KEY, sess.session.user.id);
 
-    if (!(await validateStoredEvent())) {
+    if (!(await validateStoredEvent()) || !getSide()) {
       await loadEvents();
       setPhase("event");
       return;
@@ -221,9 +230,14 @@ export default function AuthGate({ children }) {
       setError("Name this station first.");
       return;
     }
+    if (!side) {
+      setError("Pick a side for this station.");
+      return;
+    }
     localStorage.setItem(EVENT_KEY, ev.id);
     localStorage.setItem(EVENT_LABEL, ev.label);
     localStorage.setItem(STATION_KEY, station.trim());
+    localStorage.setItem(SIDE_KEY, side);
     setError("");
     setPhase("ready");
   }
@@ -324,6 +338,38 @@ export default function AuthGate({ children }) {
             <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 5 }}>
               Recorded on every check-in so a bad scan can be traced to a
               station.
+            </div>
+          </div>
+          <div>
+            <label style={label}>Side</label>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+              }}
+            >
+              {["left", "right"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSide(s)}
+                  style={{
+                    padding: "12px 0",
+                    borderRadius: "var(--radius)",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    textTransform: "capitalize",
+                    border: `2px solid ${side === s ? "var(--navy)" : "var(--border2)"}`,
+                    background: side === s ? "var(--navy)" : "var(--bg2)",
+                    color: side === s ? "var(--gold)" : "var(--text2)",
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 5 }}>
+              Sign-in laptops and the photographer on the same side must match.
             </div>
           </div>
           <div>
