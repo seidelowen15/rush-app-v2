@@ -177,6 +177,7 @@ export default function Kiosk() {
   const [idError, setIdError] = useState("");
   const [idWarning, setIdWarning] = useState(false); // soft: unrecognised shape
   const [offline, setOffline] = useState(false); // RPC unreachable this attempt
+  const [profileBlock, setProfileBlock] = useState(false); // no rush profile on file
   const [canonical, setCanonical] = useState(null);
   const [existingPnm, setExistingPnm] = useState(null);
 
@@ -298,10 +299,24 @@ export default function Kiosk() {
         setIdError("Already checked in to this event.");
         return;
       }
+      // Profile cutoff: no rush_profiles row means no entry.
+      const { data: prof, error: profErr } = await supabase
+        .from("rush_profiles")
+        .select("pnm_id")
+        .eq("pnm_id", data.id)
+        .maybeSingle();
+      if (profErr) {
+        // Cannot verify. Let them through rather than reject on a network blip.
+        console.error("profile check failed", profErr);
+      } else if (!prof) {
+        setProfileBlock(true);
+        return;
+      }
       setExistingPnm(data);
       setStep("confirm");
     } else {
-      setStep("form");
+      // Nobody with this ID exists, so no profile can be attached to it.
+      setProfileBlock(true);
     }
   }
 
@@ -496,6 +511,22 @@ export default function Kiosk() {
                 style={{ fontSize: 13, color: "var(--red-text)", marginTop: 6 }}
               >
                 {idError}
+              </div>
+            )}
+
+            {profileBlock && (
+              <div
+                className="banner banner-red"
+                style={{
+                  marginTop: 10,
+                  padding: "14px 16px",
+                  fontSize: 16,
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                  textAlign: "center",
+                }}
+              >
+                RUSH PROFILE NOT FILLED OUT, COMPLETE BEFORE ENTRY
               </div>
             )}
 
