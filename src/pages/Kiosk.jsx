@@ -178,6 +178,7 @@ export default function Kiosk() {
   const [idWarning, setIdWarning] = useState(false); // soft: unrecognised shape
   const [offline, setOffline] = useState(false); // RPC unreachable this attempt
   const [profileBlock, setProfileBlock] = useState(false); // no rush profile on file
+  const [blockSeconds, setBlockSeconds] = useState(10);
   const [canonical, setCanonical] = useState(null);
   const [existingPnm, setExistingPnm] = useState(null);
 
@@ -200,6 +201,18 @@ export default function Kiosk() {
     return () => supabase.removeChannel(channel);
   }, [eventId]);
 
+  // Profile-block message clears itself so the next PNM isn't stuck
+  // looking at someone else's rejection.
+  useEffect(() => {
+    if (!profileBlock) return;
+    const t = setTimeout(() => {
+      setProfileBlock(false);
+      setPsuId("");
+      setIdError("");
+      setStep("id");
+    }, 10000);
+    return () => clearTimeout(t);
+  }, [profileBlock]);
   // One query drives all three numbers. photo_path lives on pnms (one headshot
   // per person, ever), so "waiting for photo" means attendees at this event who
   // have never been photographed.
@@ -527,6 +540,27 @@ export default function Kiosk() {
                 }}
               >
                 RUSH PROFILE NOT FILLED OUT, COMPLETE BEFORE ENTRY
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    marginTop: 8,
+                    opacity: 0.75,
+                  }}
+                >
+                  Clearing in {blockSeconds}s —{" "}
+                  <span
+                    style={{ textDecoration: "underline", cursor: "pointer" }}
+                    onClick={() => {
+                      setProfileBlock(false);
+                      setPsuId("");
+                      setIdError("");
+                      setStep("id");
+                    }}
+                  >
+                    next person
+                  </span>
+                </div>
               </div>
             )}
 
