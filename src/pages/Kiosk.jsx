@@ -79,7 +79,7 @@ export function NavBar({ waiting = {} }) {
   return (
     <div className="topbar">
       <Link to="/kiosk" className="topbar-brand">
-        <span>AKΨ</span>
+        <span>ΦΒΛ</span>
       </Link>
       <div
         className="topbar-event"

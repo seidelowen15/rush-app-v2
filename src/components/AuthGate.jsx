@@ -263,7 +263,7 @@ export default function AuthGate({ children }) {
               fontSize: 12,
             }}
           >
-            AKΨ Kiosk
+            ΦΒΛ Kiosk
           </div>
           <div style={{ fontSize: 13, color: "var(--text2)" }}>
             Sign in with the shared kiosk account.
