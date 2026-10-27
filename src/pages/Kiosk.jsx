@@ -312,24 +312,10 @@ export default function Kiosk() {
         setIdError("Already checked in to this event.");
         return;
       }
-      // Profile cutoff: no rush_profiles row means no entry.
-      const { data: prof, error: profErr } = await supabase
-        .from("rush_profiles")
-        .select("pnm_id")
-        .eq("pnm_id", data.id)
-        .maybeSingle();
-      if (profErr) {
-        // Cannot verify. Let them through rather than reject on a network blip.
-        console.error("profile check failed", profErr);
-      } else if (!prof) {
-        setProfileBlock(true);
-        return;
-      }
       setExistingPnm(data);
       setStep("confirm");
     } else {
-      // Nobody with this ID exists, so no profile can be attached to it.
-      setProfileBlock(true);
+      setStep("form");
     }
   }
 
