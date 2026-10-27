@@ -2,12 +2,12 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --navy: #1e3a6e;
-  --navy-dark: #152b52;
-  --navy-light: #2a4f96;
-  --gold: #f5b800;
+  --navy: #12317E;
+  --navy-dark: #0B2A6B;
+  --navy-light: #1D3C8F;
+  --gold: #F5B50A;
   --gold-dark: #c99200;
-  --gold-light: #ffd84d;
+  --gold-light: #FFCB3D;
   --bg: #ffffff;
   --bg2: #f5f6f9;
   --bg3: #eef0f5;
