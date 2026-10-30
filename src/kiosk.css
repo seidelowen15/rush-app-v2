@@ -1,0 +1,273 @@
+/* ── Sign-in kiosk (laptop-first, phone fallback) ──────────────────────
+   Builds on queue.css tokens (.q-page) and brand colors from index.css. */
+
+.k-page {
+  --k-text2: #5b6880;
+  --k-border: #d5dde9;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Header */
+.k-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 76px;
+  padding:
+    calc(10px + env(safe-area-inset-top))
+    calc(28px + env(safe-area-inset-right))
+    10px
+    calc(28px + env(safe-area-inset-left));
+  background: var(--navy);
+  border-bottom: 4px solid var(--gold);
+}
+.k-brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.k-mark {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 38px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+.k-sep { width: 1px; height: 32px; background: rgba(255, 255, 255, 0.35); }
+.k-appname { font-size: 22px; font-weight: 700; color: #fff; white-space: nowrap; }
+.k-controls-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  background: transparent;
+  color: #fff;
+  font-size: 16px !important;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.k-controls-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.k-header :focus-visible { outline-color: var(--gold); }
+
+/* Center column */
+.k-main {
+  flex: 1 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding:
+    clamp(28px, 6vh, 72px)
+    calc(20px + env(safe-area-inset-right))
+    clamp(24px, 4vh, 48px)
+    calc(20px + env(safe-area-inset-left));
+}
+.k-center {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.k-event {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--navy);
+  overflow-wrap: anywhere;
+}
+.k-title {
+  margin-top: 10px;
+  font-size: clamp(32px, 4.2vw, 46px);
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--q-text);
+  text-wrap: balance;
+}
+.k-sub {
+  margin-top: 10px;
+  font-size: clamp(17px, 1.6vw, 20px);
+  color: var(--k-text2);
+}
+
+/* Panel */
+.k-panel {
+  width: 100%;
+  margin-top: clamp(22px, 4vh, 36px);
+  padding: 26px 28px 28px;
+  background: #fff;
+  border: 1px solid var(--k-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(23, 40, 67, 0.04), 0 8px 24px rgba(23, 40, 67, 0.06);
+  text-align: left;
+}
+.k-form, .k-step { display: flex; flex-direction: column; gap: 10px; }
+.k-step { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--k-border); gap: 12px; }
+.k-step-title { font-weight: 700; color: var(--q-text); }
+.k-label { font-size: 15px; font-weight: 700; color: var(--q-text); padding: 0; }
+.k-input {
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1.5px solid var(--k-border);
+  background: #fff;
+  color: var(--q-text);
+  font-size: 20px !important;
+  font-family: inherit;
+  transition: border-color .15s, box-shadow .15s;
+}
+.k-input::placeholder { color: #8c97ab; }
+.k-input:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 4px rgba(47, 111, 228, 0.22); }
+.k-input:disabled { background: #f6f8fb; color: var(--k-text2); }
+.k-input.is-warn, .k-input.is-error { border-color: #b42318; }
+.k-input-sm { min-height: 50px; font-size: 17px !important; }
+.k-btn { min-height: 56px; font-size: 18px !important; }
+.k-continue { margin-top: 8px; font-size: 20px !important; font-weight: 800; }
+.k-error { font-size: 15px; color: #b42318; font-weight: 600; }
+.k-warn { font-size: 15px; color: #8f1d1d; line-height: 1.45; }
+.k-hint { font-size: 15px; color: var(--k-text2); }
+.k-block { margin-top: 4px; }
+
+.k-welcome {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f4f6fa;
+  border-left: 4px solid var(--gold);
+}
+.k-welcome-name { font-size: 20px; font-weight: 700; color: var(--q-text); overflow-wrap: anywhere; }
+.k-welcome-meta { margin-top: 2px; font-size: 15px; color: var(--k-text2); }
+
+.k-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.k-years { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.k-years .q-seg-btn { min-height: 46px; font-size: 14px !important; padding: 0 4px; }
+.k-major { position: relative; }
+.k-major-list {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  z-index: 20;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--k-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(23, 40, 67, 0.12);
+}
+.k-major-opt {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 1px solid #eef1f6;
+  background: none;
+  text-align: left;
+  color: var(--q-text);
+  font-size: 15px !important;
+}
+.k-major-opt:hover, .k-major-opt:focus-visible { background: #f4f6fa; }
+
+/* Success */
+.k-success { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 6px 0 2px; }
+.k-success-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--q-green-bg);
+  border: 2px solid var(--q-green);
+  color: var(--q-green);
+  font-size: 28px;
+  font-weight: 700;
+}
+.k-success-title { font-size: 26px; line-height: 1.2; font-weight: 800; color: var(--q-text); overflow-wrap: anywhere; }
+.k-success-text { font-size: 18px; color: var(--k-text2); margin-bottom: 8px; }
+
+/* Station identity */
+.k-station {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 16px;
+  color: var(--k-text2);
+  overflow-wrap: anywhere;
+}
+.k-station svg { color: #5b6880; flex-shrink: 0; }
+
+/* Footer */
+.k-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding:
+    14px
+    calc(28px + env(safe-area-inset-right))
+    calc(14px + env(safe-area-inset-bottom))
+    calc(28px + env(safe-area-inset-left));
+  border-top: 1px solid var(--k-border);
+  background: #fafbfd;
+  font-size: 15px;
+  color: var(--k-text2);
+}
+.k-stats, .k-queues { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.k-stats strong { color: var(--q-text); font-size: 17px; font-variant-numeric: tabular-nums; }
+.k-scope { font-size: 13px; }
+.k-divider { display: inline-block; width: 1px; height: 22px; background: var(--k-border); }
+.k-queue-item { display: inline-flex; align-items: center; gap: 16px; }
+.k-queue-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--q-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.k-queue-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.k-queue-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 22px; padding: 0 7px;
+  border-radius: 11px;
+  background: #e8edf5;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Short laptops (1280x720, 1366x768): tighten vertical rhythm first */
+@media (max-height: 800px) and (min-width: 700px) {
+  .k-header { min-height: 68px; }
+  .k-main { padding-top: 24px; padding-bottom: 20px; }
+  .k-title { font-size: 40px; }
+  .k-panel { margin-top: 22px; padding: 22px 26px 24px; }
+}
+
+/* Phone fallback */
+@media (max-width: 600px) {
+  .k-header { min-height: 60px; padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right)); }
+  .k-mark { font-size: 28px; }
+  .k-sep { height: 24px; }
+  .k-brand { gap: 10px; }
+  .k-appname { font-size: 18px; }
+  .k-controls-btn { padding: 0 12px; }
+  .k-title { font-size: 30px; }
+  .k-panel { padding: 20px 18px 22px; }
+  .k-footer { padding-left: 16px; padding-right: 16px; }
+  .k-divider { display: none; }
+  .k-stats, .k-queues { gap: 4px 18px; }
+}
+@media (max-width: 400px) {
+  .k-controls-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .k-controls-btn { width: 46px; padding: 0; justify-content: center; }
+  .k-appname { font-size: 16px; }
+  .k-grid2 { grid-template-columns: 1fr; }
+  .k-years { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { BRAND } from "../lib/brand";
 import {
   getEventId,
   getEventLabel,
   getStationId,
   getSide,
-  getSideLabel,
-  clearEvent,
 } from "../components/AuthGate";
+import StationControls from "../components/StationControls";
+import "../queue.css";
+import "../kiosk.css";
 
 const YEARS = ["Freshman", "Sophomore", "Junior", "Senior"];
 const MAJORS = [
@@ -74,85 +76,6 @@ const MAJORS = [
   "Other",
 ];
 
-export function NavBar({ waiting = {} }) {
-  const loc = useLocation();
-  return (
-    <div className="topbar">
-      <Link to="/kiosk" className="topbar-brand">
-        <span>ΦΒΛ</span>
-      </Link>
-      <div
-        className="topbar-event"
-        title="Tap to change event"
-        style={{ cursor: "pointer" }}
-        onClick={() => {
-          if (confirm("Change event for this station?")) {
-            clearEvent();
-            location.reload();
-          }
-        }}
-      >
-        {getEventLabel()} · {getSideLabel()} · {getStationId()}{" "}
-      </div>
-      <Link
-        to="/kiosk"
-        className={`nav-link ${loc.pathname === "/kiosk" ? "active" : ""}`}
-      >
-        Sign-in kiosk
-      </Link>
-      {["left", "right"].map((s) => (
-        <Link
-          key={s}
-          to={`/queue/${s}`}
-          className={`nav-link ${loc.pathname === `/queue/${s}` ? "active" : ""}`}
-        >
-          {s === "left" ? "Left queue" : "Right queue"}
-          {waiting[s] > 0 && <span className="badge">{waiting[s]}</span>}
-        </Link>
-      ))}
-      <button
-        className="nav-link"
-        style={{
-          marginLeft: "auto",
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-        }}
-        onClick={async () => {
-          if (!confirm("Sign this station out?")) return;
-          clearEvent();
-          localStorage.removeItem("kiosk_station_id");
-          localStorage.removeItem("kiosk_side");
-          await supabase.auth.signOut();
-          location.reload();
-        }}
-      >
-        Sign out
-      </button>
-    </div>
-  );
-}
-
-function StatCard({ label, value }) {
-  const [display, setDisplay] = useState(value);
-  const [bump, setBump] = useState(false);
-  const prev = useRef(value);
-  useEffect(() => {
-    if (value !== prev.current) {
-      setBump(true);
-      setTimeout(() => setBump(false), 350);
-      prev.current = value;
-    }
-    setDisplay(value);
-  }, [value]);
-  return (
-    <div className="stat-card">
-      <div className={`stat-num ${bump ? "bump" : ""}`}>{display}</div>
-      <div className="stat-label">{label}</div>
-    </div>
-  );
-}
-
 export default function Kiosk() {
   const eventId = getEventId();
   const stationId = getStationId();
@@ -181,6 +104,11 @@ export default function Kiosk() {
   const [blockSeconds, setBlockSeconds] = useState(10);
   const [canonical, setCanonical] = useState(null);
   const [existingPnm, setExistingPnm] = useState(null);
+  const [checking, setChecking] = useState(false); // ID lookup in flight
+  const [stationOpen, setStationOpen] = useState(false);
+  const idRef = useRef(null);
+  const flashTimer = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!eventId) return;
@@ -257,6 +185,27 @@ export default function Kiosk() {
     });
   }
 
+  // Success panel: shown only after the attendance write succeeds. Same
+  // 3.5s as before; "Next person" ends it early. One timer at a time so a
+  // stale timer can't cut the next person's message short.
+  function showSuccess(first, needsPhoto) {
+    clearTimeout(flashTimer.current);
+    setFlash({ first, needsPhoto });
+    flashTimer.current = setTimeout(() => {
+      setFlash(null);
+      focusId();
+    }, 3500);
+  }
+  function nextPerson() {
+    clearTimeout(flashTimer.current);
+    setFlash(null);
+    focusId();
+  }
+  function focusId() {
+    setTimeout(() => idRef.current?.focus(), 0);
+  }
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+
   function resetForm() {
     setPsuId("");
     setFirstName("");
@@ -271,6 +220,7 @@ export default function Kiosk() {
     setCanonical(null);
     setExistingPnm(null);
     setSubmitting(false);
+    focusId();
   }
 
   // Canonicalisation is done by the database function, never re-implemented
@@ -291,6 +241,16 @@ export default function Kiosk() {
   }
 
   async function handleIdNext() {
+    if (checking) return;
+    setChecking(true);
+    try {
+      await idNext();
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function idNext() {
     const raw = psuId.trim();
     if (!raw) {
       setIdError("Enter a PSU ID.");
@@ -362,9 +322,8 @@ export default function Kiosk() {
     setSubmitting(true);
     try {
       await checkIn(existingPnm.id);
-      setFlash(`${existingPnm.first_name} ${existingPnm.last_name}`);
+      showSuccess(existingPnm.first_name, !existingPnm.photo_path);
       resetForm();
-      setTimeout(() => setFlash(null), 3500);
     } catch (e) {
       setIdError(e.message || "Check-in failed.");
       setSubmitting(false);
@@ -415,9 +374,8 @@ export default function Kiosk() {
       }
 
       await checkIn(pnm.id);
-      setFlash(`${firstName.trim()} ${lastName.trim()}`);
+      showSuccess(firstName.trim(), true);
       resetForm();
-      setTimeout(() => setFlash(null), 3500);
     } catch (e) {
       setIdError(e.message || "Submission failed.");
       setSubmitting(false);
@@ -427,30 +385,16 @@ export default function Kiosk() {
   const filteredMajors = MAJORS.filter((m) =>
     m.toLowerCase().includes(majorSearch.toLowerCase()),
   );
-  const inputStyle = {
-    width: "100%",
-    padding: "11px 13px",
-    borderRadius: "var(--radius)",
-    border: "1.5px solid var(--border2)",
-    background: "var(--bg)",
-    color: "var(--text)",
-    outline: "none",
-    fontSize: 15,
-    fontFamily: "inherit",
-    transition: "border-color .15s",
-  };
-  const idInputStyle = idWarning
-    ? { ...inputStyle, border: "2px solid var(--red-text)" }
-    : inputStyle;
-  const labelStyle = {
-    fontSize: 12,
-    fontWeight: 600,
-    color: "var(--text2)",
-    marginBottom: 5,
-    display: "block",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  };
+  const sideName = side === "left" ? "Left" : side === "right" ? "Right" : "";
+  const idErrorId = "k-id-error";
+  const idHintId = "k-id-hint";
+
+  function onStationSaved() {
+    clearTimeout(flashTimer.current);
+    setFlash(null);
+    resetForm(); // re-renders with the new event/side; the eventId effect reloads
+    navigate("/kiosk", { replace: true });
+  }
 
   if (!eventId) {
     return (
@@ -461,349 +405,370 @@ export default function Kiosk() {
   }
 
   return (
-    <div className="page">
-      <NavBar waiting={waiting} />
-      <div
-        className="content"
-        style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}
-      >
-        <div className="stat-grid">
-          <StatCard label="Checked in" value={checkedInCount} />
-          <StatCard label="Waiting for photo" value={waiting[side] || 0} />
+    <div className="q-page k-page">
+      <header className="k-header">
+        <div className="k-brand">
+          <span className="k-mark" aria-hidden="true">
+            {BRAND.mark}
+          </span>
+          <span className="k-sep" aria-hidden="true" />
+          <span className="k-appname">{BRAND.name} Rush</span>
         </div>
-
-        {flash && (
-          <div
-            className="banner banner-gold"
-            style={{
-              marginBottom: 14,
-              fontSize: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span style={{ fontSize: 18 }}>✓</span> {flash} checked in and added
-            to photo queue
-          </div>
-        )}
-
-        <div
-          className="card"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 14,
-            borderTop: `3px solid var(--gold)`,
-          }}
+        <button
+          type="button"
+          className="k-controls-btn"
+          onClick={() => setStationOpen(true)}
+          aria-haspopup="dialog"
         >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: "var(--navy)",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-            }}
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
           >
-            Rush sign-in
-          </div>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span className="k-controls-label">Station controls</span>
+        </button>
+      </header>
 
-          <div>
-            <label style={labelStyle}>PSU ID</label>
-            <input
-              style={idInputStyle}
-              value={psuId}
-              onChange={(e) => {
-                setPsuId(e.target.value);
-                setIdError("");
-                setIdWarning(false);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handleIdNext()}
-              placeholder="e.g. abc1234"
-              autoComplete="off"
-              spellCheck={false}
-              autoFocus
-              disabled={step !== "id"}
-            />
+      <main className="k-main">
+        <div className="k-center">
+          <p className="k-event">{getEventLabel()}</p>
+          <h1 className="k-title">Welcome to {BRAND.name} rush.</h1>
+          <p className="k-sub">Enter your PSU ID to get started.</p>
 
-            {idError && (
-              <div
-                style={{ fontSize: 13, color: "var(--red-text)", marginTop: 6 }}
-              >
-                {idError}
+          <section className="k-panel" aria-label="Rush sign-in">
+            {flash ? (
+              <div className="k-success" role="status">
+                <span className="k-success-icon" aria-hidden="true">
+                  ✓
+                </span>
+                <h2 className="k-success-title">
+                  You're checked in, {flash.first}.
+                </h2>
+                <p className="k-success-text">
+                  {flash.needsPhoto
+                    ? `Head to the ${sideName.toLowerCase()} photo station for your headshot.`
+                    : "Your headshot is already on file. You're all set."}
+                </p>
+                <button
+                  type="button"
+                  className="q-btn q-btn-secondary q-btn-block k-btn"
+                  onClick={nextPerson}
+                >
+                  Next person
+                </button>
               </div>
-            )}
-
-            {profileBlock && (
-              <div
-                className="banner banner-red"
-                style={{
-                  marginTop: 10,
-                  padding: "14px 16px",
-                  fontSize: 16,
-                  fontWeight: 700,
-                  lineHeight: 1.4,
-                  textAlign: "center",
-                }}
-              >
-                RUSH PROFILE NOT FILLED OUT, COMPLETE BEFORE ENTRY
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    marginTop: 8,
-                    opacity: 0.75,
+            ) : (
+              <>
+                <form
+                  className="k-form"
+                  noValidate
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (step === "id") handleIdNext();
                   }}
                 >
-                  Clearing in {blockSeconds}s —{" "}
-                  <span
-                    style={{ textDecoration: "underline", cursor: "pointer" }}
-                    onClick={() => {
-                      setProfileBlock(false);
-                      setPsuId("");
+                  <label className="k-label" htmlFor="k-psu-id">
+                    PSU ID
+                  </label>
+                  <input
+                    id="k-psu-id"
+                    ref={idRef}
+                    className={`k-input ${idWarning ? "is-warn" : ""} ${
+                      idError && step === "id" ? "is-error" : ""
+                    }`}
+                    value={psuId}
+                    onChange={(e) => {
+                      setPsuId(e.target.value);
                       setIdError("");
-                      setStep("id");
+                      setIdWarning(false);
                     }}
-                  >
-                    next person
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {offline && !idWarning && (
-              <div
-                style={{ fontSize: 13, color: "var(--text2)", marginTop: 6 }}
-              >
-                Offline. Enter their details in full — the ID is verified when
-                the network returns.
-              </div>
-            )}
-            {idWarning && (
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "var(--red-text)",
-                  marginTop: 6,
-                  lineHeight: 1.45,
-                }}
-              >
-                That doesn't look like a PSU ID (three letters then 3–5
-                numbers).
-                <strong> Double-check it — you can still continue.</strong>
-              </div>
-            )}
-
-            {step === "id" && (
-              <button
-                className="btn btn-navy"
-                style={{ width: "100%", marginTop: 10, padding: "11px 0" }}
-                onClick={handleIdNext}
-                disabled={!psuId.trim()}
-              >
-                Continue →
-              </button>
-            )}
-          </div>
-
-          {step === "confirm" && existingPnm && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div
-                className="banner banner-navy"
-                style={{ borderLeft: `4px solid var(--gold)` }}
-              >
-                <div
-                  style={{
-                    fontWeight: 600,
-                    marginBottom: 2,
-                    color: "var(--gold)",
-                  }}
-                >
-                  Welcome back, {existingPnm.first_name} {existingPnm.last_name}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.8 }}>
-                  {existingPnm.major || "—"} · {existingPnm.year || "—"}
-                </div>
-              </div>
-              <button
-                className="btn btn-gold"
-                style={{ width: "100%", padding: "11px 0" }}
-                onClick={handleConfirmExisting}
-                disabled={submitting}
-              >
-                {submitting ? "Checking in..." : "✓ Check in"}
-              </button>
-              <button
-                className="btn"
-                style={{ width: "100%", padding: "9px 0" }}
-                onClick={resetForm}
-              >
-                Not me — go back
-              </button>
-            </div>
-          )}
-
-          {step === "form" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 10,
-                }}
-              >
-                <div>
-                  <label style={labelStyle}>First name</label>
-                  <input
-                    style={inputStyle}
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="First"
+                    placeholder="e.g. abc1234"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     autoFocus
+                    disabled={step !== "id"}
+                    aria-invalid={!!idError || idWarning}
+                    aria-describedby={
+                      [idError && idErrorId, (idWarning || offline) && idHintId]
+                        .filter(Boolean)
+                        .join(" ") || undefined
+                    }
                   />
-                </div>
-                <div>
-                  <label style={labelStyle}>Last name</label>
-                  <input
-                    style={inputStyle}
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Last"
-                  />
-                </div>
-              </div>
 
-              <div>
-                <label style={labelStyle}>Year</label>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4,1fr)",
-                    gap: 6,
-                  }}
-                >
-                  {YEARS.map((y) => (
-                    <button
-                      key={y}
-                      onClick={() => setYear(y)}
-                      style={{
-                        padding: "9px 0",
-                        borderRadius: "var(--radius)",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        border: `1.5px solid ${year === y ? "var(--navy)" : "var(--border2)"}`,
-                        background: year === y ? "var(--navy)" : "var(--bg2)",
-                        color: year === y ? "var(--gold)" : "var(--text2)",
-                        transition: "all .15s",
-                      }}
-                    >
-                      {y}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                  {idError && (
+                    <p className="k-error" id={idErrorId} role="alert">
+                      {idError}
+                    </p>
+                  )}
 
-              <div style={{ position: "relative" }}>
-                <label style={labelStyle}>Major</label>
-                <input
-                  style={inputStyle}
-                  value={major || majorSearch}
-                  onChange={(e) => {
-                    setMajorSearch(e.target.value);
-                    setMajor("");
-                    setShowMajorList(true);
-                  }}
-                  onFocus={() => setShowMajorList(true)}
-                  placeholder="Search or type major..."
-                />
-                {showMajorList && (majorSearch || !major) && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "100%",
-                      left: 0,
-                      right: 0,
-                      zIndex: 20,
-                      background: "var(--bg)",
-                      border: "1px solid var(--border2)",
-                      borderRadius: "var(--radius)",
-                      maxHeight: 180,
-                      overflowY: "auto",
-                      marginTop: 2,
-                      boxShadow: "0 4px 16px rgba(30,58,110,0.15)",
-                    }}
-                  >
-                    {filteredMajors.map((m) => (
-                      <div
-                        key={m}
+                  {profileBlock && (
+                    <div className="q-alert k-block" role="alert">
+                      <span className="q-alert-msg">
+                        <strong>
+                          Rush profile not filled out. Complete it before
+                          entry.
+                        </strong>
+                        <br />
+                        Clearing in {blockSeconds}s.
+                      </span>
+                      <button
+                        type="button"
+                        className="q-btn q-btn-secondary"
                         onClick={() => {
-                          setMajor(m);
-                          setMajorSearch("");
-                          setShowMajorList(false);
+                          setProfileBlock(false);
+                          setPsuId("");
+                          setIdError("");
+                          setStep("id");
+                          focusId();
                         }}
-                        style={{
-                          padding: "9px 12px",
-                          cursor: "pointer",
-                          fontSize: 13,
-                          color: "var(--text)",
-                          borderBottom: "0.5px solid var(--border)",
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "var(--bg2)")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "transparent")
-                        }
                       >
-                        {m}
+                        Next person
+                      </button>
+                    </div>
+                  )}
+
+                  {offline && !idWarning && (
+                    <p className="k-hint" id={idHintId}>
+                      Offline. Enter your details in full; the ID is verified
+                      when the network returns.
+                    </p>
+                  )}
+                  {idWarning && (
+                    <p className="k-warn" id={idHintId}>
+                      That doesn't look like a PSU ID (three letters then 3–5
+                      numbers). <strong>Double-check it. You can still continue.</strong>
+                    </p>
+                  )}
+
+                  {step === "id" && (
+                    <button
+                      type="submit"
+                      className="q-btn q-btn-primary q-btn-block k-btn k-continue"
+                      disabled={checking}
+                      aria-busy={checking}
+                    >
+                      {checking ? "Checking…" : "Continue →"}
+                    </button>
+                  )}
+                </form>
+
+                {step === "confirm" && existingPnm && (
+                  <div className="k-step">
+                    <div className="k-welcome">
+                      <div className="k-welcome-name">
+                        Welcome back, {existingPnm.first_name}{" "}
+                        {existingPnm.last_name}
                       </div>
-                    ))}
+                      <div className="k-welcome-meta">
+                        {existingPnm.major || "—"} · {existingPnm.year || "—"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="q-btn q-btn-primary q-btn-block k-btn"
+                      onClick={handleConfirmExisting}
+                      disabled={submitting}
+                      aria-busy={submitting}
+                      autoFocus
+                    >
+                      {submitting ? "Checking in…" : "✓ Check in"}
+                    </button>
+                    <button
+                      type="button"
+                      className="q-btn q-btn-secondary q-btn-block"
+                      onClick={resetForm}
+                      disabled={submitting}
+                    >
+                      Not me, go back
+                    </button>
                   </div>
                 )}
-              </div>
 
-              <button
-                className="btn btn-gold"
-                style={{
-                  width: "100%",
-                  padding: "12px 0",
-                  fontSize: 15,
-                  marginTop: 2,
-                }}
-                onClick={handleSubmitNew}
-                disabled={
-                  submitting ||
-                  !firstName.trim() ||
-                  !lastName.trim() ||
-                  !year ||
-                  !major
-                }
-              >
-                {submitting ? "Submitting..." : "Submit & check in"}
-              </button>
-              <button
-                className="btn"
-                style={{ width: "100%", padding: "9px 0" }}
-                onClick={resetForm}
-              >
-                ← Go back
-              </button>
-            </div>
-          )}
-        </div>
+                {step === "form" && (
+                  <form
+                    className="k-step"
+                    noValidate
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSubmitNew();
+                    }}
+                  >
+                    <p className="k-step-title">
+                      First time here? Tell us a bit about you.
+                    </p>
+                    <div className="k-grid2">
+                      <label className="q-field">
+                        <span className="k-label">First name</span>
+                        <input
+                          className="k-input k-input-sm"
+                          value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)}
+                          placeholder="First"
+                          autoComplete="off"
+                          autoFocus
+                        />
+                      </label>
+                      <label className="q-field">
+                        <span className="k-label">Last name</span>
+                        <input
+                          className="k-input k-input-sm"
+                          value={lastName}
+                          onChange={(e) => setLastName(e.target.value)}
+                          placeholder="Last"
+                          autoComplete="off"
+                        />
+                      </label>
+                    </div>
 
-        <div
-          style={{
-            marginTop: 12,
-            fontSize: 12,
-            color: "var(--text3)",
-            textAlign: "center",
-          }}
-        >
-          All kiosk stations share the same live database.
+                    <fieldset className="q-field">
+                      <legend className="k-label">Year</legend>
+                      <div className="k-years">
+                        {YEARS.map((y) => (
+                          <button
+                            key={y}
+                            type="button"
+                            className={`q-seg-btn ${year === y ? "is-active" : ""}`}
+                            aria-pressed={year === y}
+                            onClick={() => setYear(y)}
+                          >
+                            {y}
+                          </button>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <div className="q-field k-major">
+                      <label className="k-label" htmlFor="k-major">
+                        Major
+                      </label>
+                      <input
+                        id="k-major"
+                        className="k-input k-input-sm"
+                        value={major || majorSearch}
+                        onChange={(e) => {
+                          setMajorSearch(e.target.value);
+                          setMajor("");
+                          setShowMajorList(true);
+                        }}
+                        onFocus={() => setShowMajorList(true)}
+                        placeholder="Search or type major..."
+                        autoComplete="off"
+                        aria-expanded={showMajorList && (!!majorSearch || !major)}
+                        aria-controls="k-major-list"
+                      />
+                      {showMajorList && (majorSearch || !major) && (
+                        <div className="k-major-list" id="k-major-list">
+                          {filteredMajors.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              className="k-major-opt"
+                              onClick={() => {
+                                setMajor(m);
+                                setMajorSearch("");
+                                setShowMajorList(false);
+                              }}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="q-btn q-btn-primary q-btn-block k-btn"
+                      disabled={
+                        submitting ||
+                        !firstName.trim() ||
+                        !lastName.trim() ||
+                        !year ||
+                        !major
+                      }
+                      aria-busy={submitting}
+                    >
+                      {submitting ? "Submitting…" : "Submit & check in"}
+                    </button>
+                    <button
+                      type="button"
+                      className="q-btn q-btn-secondary q-btn-block"
+                      onClick={resetForm}
+                      disabled={submitting}
+                    >
+                      ← Go back
+                    </button>
+                  </form>
+                )}
+              </>
+            )}
+          </section>
+
+          <p className="k-station">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z" />
+            </svg>
+            {sideName} sign-in station · {stationId}
+          </p>
         </div>
-      </div>
+      </main>
+
+      <footer className="k-footer">
+        <div className="k-stats">
+          <span>
+            <strong>{checkedInCount}</strong> checked in{" "}
+            <span className="k-scope">(both sides)</span>
+          </span>
+          <span className="k-divider" aria-hidden="true" />
+          <span>
+            <strong>{waiting[side] || 0}</strong> waiting for photo{" "}
+            <span className="k-scope">({sideName})</span>
+          </span>
+        </div>
+        <nav className="k-queues" aria-label="Photo queues">
+          {["left", "right"].map((s, i) => (
+            <span key={s} className="k-queue-item">
+              {i > 0 && <span className="k-divider" aria-hidden="true" />}
+              <Link to={`/queue/${s}`} className="k-queue-link">
+                {s === "left" ? "Left" : "Right"} queue
+                <span className="k-queue-count">
+                  {waiting[s]}
+                  <span className="q-sr-only"> waiting for photo</span>
+                </span>
+                <span aria-hidden="true">→</span>
+              </Link>
+            </span>
+          ))}
+        </nav>
+      </footer>
+
+      <StationControls
+        open={stationOpen}
+        onClose={() => setStationOpen(false)}
+        onSaved={onStationSaved}
+        title="Station controls"
+        links={[
+          { to: "/queue/left", label: "Left photo queue", hint: waiting.left },
+          { to: "/queue/right", label: "Right photo queue", hint: waiting.right },
+        ]}
+        note="All kiosk stations share the same live database, so check-ins appear everywhere instantly."
+      />
     </div>
   );
 }
