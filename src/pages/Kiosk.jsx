@@ -795,7 +795,7 @@ export default function Kiosk() {
     <div className="q-page k-page">
       <header className="k-header">
         <div className="k-brand">
-          <span className="k-mark" aria-hidden="true">
+          <span className="k-mark brand-mark" aria-hidden="true">
             {BRAND.mark}
           </span>
           <span className="k-sep" aria-hidden="true" />

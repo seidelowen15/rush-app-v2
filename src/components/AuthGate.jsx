@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { BRAND } from "../lib/brand";
 
 // ---------------------------------------------------------------------------
 // Shared kiosk context, read by Kiosk / Camera / Queue / Watch.
@@ -303,7 +304,10 @@ export default function AuthGate({ children }) {
               fontSize: 12,
             }}
           >
-            AKΨ Kiosk
+            <span className="brand-mark" style={{ fontSize: 15, letterSpacing: "0.01em" }}>
+              {BRAND.mark}
+            </span>{" "}
+            Kiosk
           </div>
           <div style={{ fontSize: 13, color: "var(--text2)" }}>
             Sign in with the shared kiosk account.

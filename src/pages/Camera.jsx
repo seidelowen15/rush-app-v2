@@ -245,7 +245,7 @@ export default function Camera() {
       <div className="q-header-inner">
         <div className="q-brandrow">
           <span className="q-brandrow-left">
-            <span className="q-mark" aria-hidden="true">
+            <span className="q-mark brand-mark" aria-hidden="true">
               {BRAND.mark}
             </span>
             <span>Photo station</span>
