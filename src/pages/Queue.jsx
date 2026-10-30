@@ -328,7 +328,7 @@ export default function Queue({ side }) {
                     <div
                       key={r.id}
                       className={`queue-item ${isNext ? "is-next" : ""} ${isNew ? "new-entry" : ""}`}
-                      onClick={() => navigate(`/camera?id=${r.pnm_id}`)}
+                      onClick={() => navigate(`/camera?id=${r.pnm_id}&side=${side}`)}
                       style={{ cursor: "pointer" }}
                     >
                       <div

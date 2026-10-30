@@ -12,6 +12,12 @@ export default function Camera() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const targetPnmId = searchParams.get("id"); // now a pnms.id uuid
+  // The queue the person was tapped from. Falls back to the station's side
+  // for old links. Without this, a Left station photographing someone in the
+  // Right queue loaded the Left list and could not find them.
+  const sideParam = searchParams.get("side");
+  const side =
+    sideParam === "left" || sideParam === "right" ? sideParam : getSide();
   const eventId = getEventId();
 
   const [pnm, setPnm] = useState(null);
@@ -38,7 +44,7 @@ export default function Camera() {
           "id, pnm_id, signed_in_at, pnms!inner(id, psu_id, first_name, last_name, major, year, psu_id_unverified, photo_path)",
         )
         .eq("event_id", eventId)
-        .eq("side", getSide())
+        .eq("side", side)
         .is("pnms.photo_path", null)
         .order("signed_in_at", { ascending: true });
 
@@ -63,7 +69,7 @@ export default function Camera() {
 
   useEffect(() => {
     load();
-  }, [targetPnmId, eventId]);
+  }, [targetPnmId, eventId, side]);
 
   // The camera page had no realtime subscription, so new sign-ins and photos
   // taken on other devices never appeared until a reload.
@@ -93,7 +99,7 @@ export default function Camera() {
       )
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [targetPnmId, eventId]);
+  }, [targetPnmId, eventId, side]);
 
   // Same iOS resume problem as the queue: re-pull when the page comes back
   // instead of making the photographer reload. Keyed on the same attendance
@@ -108,7 +114,7 @@ export default function Camera() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pageshow", onVisible);
     };
-  }, [targetPnmId, eventId]);
+  }, [targetPnmId, eventId, side]);
 
   useEffect(() => {
     if (stream && videoRef.current) videoRef.current.srcObject = stream;
@@ -198,8 +204,9 @@ export default function Camera() {
       setTimeout(() => {
         setSuccessName(null);
         const remaining = waiting.filter((r) => r.pnm_id !== pnm.id);
-        if (remaining.length > 0) navigate(`/camera?id=${remaining[0].pnm_id}`);
-        else navigate(`/queue/${getSide()}`);
+        if (remaining.length > 0)
+          navigate(`/camera?id=${remaining[0].pnm_id}&side=${side}`);
+        else navigate(`/queue/${side}`);
       }, 1800);
     } catch (err) {
       alert("Save failed: " + (err.message || "unknown error"));
@@ -246,7 +253,7 @@ export default function Camera() {
           >
             All photos taken, or no one has checked in yet.
           </div>
-          <button className="btn btn-navy" onClick={() => navigate(`/queue/${getSide()}`)}>
+          <button className="btn btn-navy" onClick={() => navigate(`/queue/${side}`)}>
             Back to queue
           </button>
         </div>
@@ -256,7 +263,7 @@ export default function Camera() {
 
   return (
     <div className="page">
-      <NavBar waiting={{ [getSide()]: waiting.length }} />
+      <NavBar waiting={{ [side]: waiting.length }} />
       <div
         className="content"
         style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}
@@ -486,7 +493,7 @@ export default function Camera() {
                 .map((r) => (
                   <div
                     key={r.id}
-                    onClick={() => navigate(`/camera?id=${r.pnm_id}`)}
+                    onClick={() => navigate(`/camera?id=${r.pnm_id}&side=${side}`)}
                     style={{
                       padding: "8px 12px",
                       background: "var(--bg)",
