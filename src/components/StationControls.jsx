@@ -22,6 +22,7 @@ export default function StationControls({
   title = "Station settings",
   links = [], // [{ to, label, hint }]
   note,
+  extra, // host-specific controls (e.g. kiosk switches), shown above the links
 }) {
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [events, setEvents] = useState(null); // null = loading
@@ -271,6 +272,7 @@ export default function StationControls({
           </div>
 
           <div className="q-sheet-more">
+            {extra}
             {links.map((l) => (
               <Link
                 key={l.to}

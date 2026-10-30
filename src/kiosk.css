@@ -315,3 +315,15 @@
   font-size: 14px !important;
   white-space: nowrap;
 }
+
+/* Offline queue + profile switch */
+.k-queued-note { font-size: 14px; color: #8a5300; background: #fff4e0; border: 1px solid #f2c97a; border-radius: 8px; padding: 6px 10px; }
+.k-pending { font-size: 13px; font-weight: 700; color: #8a5300; background: #fff4e0; border: 1px solid #f2c97a; border-radius: 999px; padding: 3px 10px; }
+.k-pending-bad { color: #8f1d1d; background: #fdeeee; border-color: #f1b8b8; }
+.k-required { font-size: 13px; font-weight: 700; color: var(--navy); background: #e8edf5; border-radius: 999px; padding: 3px 10px; }
+.k-ctl { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--q-border, #dce2ec); }
+.k-switch { display: flex; align-items: center; gap: 12px; min-height: 44px; font-weight: 700; cursor: pointer; }
+.k-switch input { width: 22px; height: 22px; accent-color: var(--navy); }
+.k-ctl-sync { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-size: 15px; }
+.k-ctl-issue { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 14px; padding: 8px 10px; border-radius: 8px; background: #fdeeee; color: #8f1d1d; }
+.k-ctl-issue-actions { display: inline-flex; gap: 4px; }
