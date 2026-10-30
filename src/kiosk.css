@@ -270,3 +270,48 @@
   .k-grid2 { grid-template-columns: 1fr; }
   .k-years { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Registering-as line and duplicate guard */
+.k-registering {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f4f6fa;
+  color: var(--k-text2);
+  font-size: 15px;
+}
+.k-registering strong { color: var(--q-text); font-size: 17px; }
+.k-edit-id { min-height: 40px; }
+.k-dupe-title { font-size: 20px; font-weight: 800; color: var(--q-text); }
+.k-dupe-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.k-dupe-opt {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name cta" "meta cta";
+  align-items: center;
+  gap: 2px 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--k-border);
+  background: #fff;
+  text-align: left;
+  color: var(--q-text);
+}
+.k-dupe-opt:hover { border-color: var(--navy); }
+.k-dupe-name { grid-area: name; font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+.k-dupe-meta { grid-area: meta; font-size: 14px; color: var(--k-text2); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.k-dupe-cta {
+  grid-area: cta;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--navy);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px !important;
+  white-space: nowrap;
+}
