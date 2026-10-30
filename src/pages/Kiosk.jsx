@@ -4,6 +4,14 @@ import { supabase } from "../lib/supabase";
 import { BRAND } from "../lib/brand";
 import { levenshtein } from "../lib/utils";
 import {
+  isNetworkError,
+  readQueue,
+  enqueue,
+  isQueued,
+  updateItem,
+  removeItem,
+} from "../lib/offlineQueue";
+import {
   getEventId,
   getEventLabel,
   getStationId,
@@ -106,6 +114,12 @@ export default function Kiosk() {
   const [blockSeconds, setBlockSeconds] = useState(10);
   const [canonical, setCanonical] = useState(null);
   const [dupMatches, setDupMatches] = useState([]); // likely existing records
+  const [requireProfile, setRequireProfile] = useState(false); // shared setting
+  const [settingBusy, setSettingBusy] = useState(false);
+  const [settingError, setSettingError] = useState("");
+  const [pending, setPending] = useState(() => readQueue()); // offline check-ins
+  const [syncing, setSyncing] = useState(false);
+  const flushing = useRef(false);
   const [existingPnm, setExistingPnm] = useState(null);
   const [checking, setChecking] = useState(false); // ID lookup in flight
   const [formError, setFormError] = useState("");
@@ -159,14 +173,178 @@ export default function Kiosk() {
   // looking at someone else's rejection.
   useEffect(() => {
     if (!profileBlock) return;
+    setBlockSeconds(10);
+    const tick = setInterval(() => setBlockSeconds((s) => Math.max(0, s - 1)), 1000);
     const t = setTimeout(() => {
       setProfileBlock(false);
       setPsuId("");
       setIdError("");
       setStep("id");
+      focusId();
     }, 10000);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      clearInterval(tick);
+    };
   }, [profileBlock]);
+
+  // ── Shared kiosk settings (Require rush profiles) ──
+  async function loadSettings() {
+    const { data, error } = await supabase.rpc("kiosk_settings");
+    if (error) {
+      // Offline or not deployed yet: keep the last known value.
+      console.error("kiosk_settings failed", error);
+      return;
+    }
+    setRequireProfile(!!data?.require_profile);
+  }
+  async function toggleRequireProfile(on) {
+    setSettingBusy(true);
+    setSettingError("");
+    const { error } = await supabase.rpc("kiosk_set_require_profile", { p_on: on });
+    setSettingBusy(false);
+    if (error) {
+      setSettingError(
+        isNetworkError(error)
+          ? "Couldn't reach the server. The setting didn't change."
+          : `Couldn't change the setting: ${error.message}`,
+      );
+      return;
+    }
+    setRequireProfile(on);
+  }
+
+  // ── Offline check-ins: retry until they reach the database ──
+  function refreshPending() {
+    setPending(readQueue());
+  }
+
+  async function syncItem(item) {
+    let pnmId = item.pnm_id;
+    if (!pnmId) {
+      const person = item.person;
+      // Checks that were skipped while offline run now.
+      const br = await supabase.rpc("kiosk_is_brother", { raw: person.psu_id });
+      if (br.error && isNetworkError(br.error)) throw br.error;
+      if (!br.error && br.data === true) {
+        updateItem(item.qid, { status: "skipped", reason: "Brother ID, not checked in" });
+        return;
+      }
+      let { data: pnm, error } = await supabase
+        .from("pnms")
+        .insert({
+          psu_id: person.psu_id,
+          first_name: person.first_name,
+          last_name: person.last_name,
+          major: person.major,
+          year: person.year,
+          source_event_id: item.event_id,
+        })
+        .select("id, psu_id, psu_id_unverified")
+        .single();
+      if (error && error.code === "23505") {
+        const { canon, unreachable } = await canonicalize(person.psu_id);
+        if (unreachable) throw new Error("Failed to fetch");
+        const res = await supabase
+          .from("pnms")
+          .select("id, psu_id, psu_id_unverified")
+          .eq("psu_id", canon)
+          .single();
+        if (res.error) throw res.error;
+        pnm = res.data;
+      } else if (error) {
+        if (isNetworkError(error)) throw error;
+        updateItem(item.qid, { status: "failed", reason: error.message });
+        return;
+      }
+      pnmId = pnm.id;
+      updateItem(item.qid, { pnm_id: pnmId }); // never create them twice
+      if (pnm.psu_id_unverified) {
+        await supabase.from("pnm_id_reviews").insert({
+          pnm_id: pnm.id,
+          raw_input: person.psu_id,
+          event_id: item.event_id,
+        });
+      }
+      const matches = await findLikelyDuplicates(
+        person.first_name,
+        person.last_name,
+        pnm.psu_id,
+      );
+      for (const m of matches.filter((x) => x.id !== pnm.id)) {
+        await supabase.from("pnm_id_reviews").insert({
+          pnm_id: m.id,
+          raw_input: m.psu_id,
+          event_id: item.event_id,
+          note: `Possible duplicate: offline kiosk check-in as ${pnm.psu_id} (${person.first_name} ${person.last_name}). If this is the same person, resolve with ${pnm.psu_id} to merge.`,
+        });
+      }
+    }
+    const { error } = await supabase.from("attendance").insert({
+      pnm_id: pnmId,
+      event_id: item.event_id,
+      station_id: item.station_id,
+      side: item.side,
+      signed_in_at: item.signed_in_at, // keep the real arrival time
+    });
+    if (error && error.code !== "23505") {
+      if (isNetworkError(error)) throw error;
+      updateItem(item.qid, { status: "failed", pnm_id: pnmId, reason: error.message });
+      return;
+    }
+    removeItem(item.qid);
+  }
+
+  async function flushQueue() {
+    if (flushing.current) return;
+    const todo = readQueue().filter((it) => it.status === "pending");
+    if (!todo.length) return;
+    flushing.current = true;
+    setSyncing(true);
+    try {
+      for (const item of todo) {
+        try {
+          await syncItem(item);
+        } catch (e) {
+          if (isNetworkError(e)) break; // still offline; try again later
+          updateItem(item.qid, { status: "failed", reason: e.message || String(e) });
+        }
+      }
+    } finally {
+      flushing.current = false;
+      setSyncing(false);
+      refreshPending();
+      if (eventId) load();
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
+    flushQueue();
+    const timer = setInterval(() => {
+      loadSettings();
+      flushQueue();
+    }, 15000);
+    const onOnline = () => {
+      loadSettings();
+      flushQueue();
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onOnline);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onOnline);
+    };
+  }, [eventId]);
+
+  // Save a check-in on this laptop when the database can't be reached.
+  // Returns true only if it was really stored.
+  function saveOffline(item) {
+    const ok = enqueue({ event_id: eventId, station_id: stationId, side, ...item });
+    refreshPending();
+    return ok;
+  }
   // One query drives all three numbers. photo_path lives on pnms (one headshot
   // per person, ever), so "waiting for photo" means attendees at this event who
   // have never been photographed.
@@ -192,9 +370,9 @@ export default function Kiosk() {
   // Success panel: shown only after the attendance write succeeds. Same
   // 3.5s as before; "Next person" ends it early. One timer at a time so a
   // stale timer can't cut the next person's message short.
-  function showSuccess(first, needsPhoto) {
+  function showSuccess(first, needsPhoto, queued = false) {
     clearTimeout(flashTimer.current);
-    setFlash({ first, needsPhoto });
+    setFlash({ first, needsPhoto, queued });
     flashTimer.current = setTimeout(() => {
       setFlash(null);
       focusId();
@@ -294,6 +472,12 @@ export default function Kiosk() {
       showSuccess(p.first_name, !p.photo_path);
       resetForm();
     } catch (e) {
+      if (isNetworkError(e) && saveOffline({ kind: "existing", pnm_id: p.id,
+        name: `${p.first_name} ${p.last_name}` })) {
+        showSuccess(p.first_name, !p.photo_path, true);
+        resetForm();
+        return;
+      }
       setFormError(e.message || "Check-in failed.");
       setSubmitting(false);
     }
@@ -342,14 +526,31 @@ export default function Kiosk() {
     if (unreachable) {
       // Cannot canonicalise and cannot look up. Collect full details rather than
       // flagging the ID, and let the runner know why we are asking.
+      if (isQueued(eventId, { rawId: raw })) {
+        setIdError("Already checked in to this event (saved on this laptop).");
+        return;
+      }
       setStep("form");
       return;
     }
 
     if (!canon) {
-      // Unrecognised shape. Still allowed through — it will be stored flagged
-      // and filed for review. We cannot match it to an existing person.
+      // Unrecognised shape. No rush profile can exist for it, so the profile
+      // requirement turns it away; otherwise it goes through flagged.
+      if (requireProfile) {
+        setProfileBlock(true);
+        return;
+      }
       setStep("form");
+      return;
+    }
+
+    // Brothers don't sign in as candidates. A failed check lets them through
+    // (an offline check-in re-runs it at sync).
+    const br = await supabase.rpc("kiosk_is_brother", { raw });
+    if (!br.error && br.data === true) {
+      setIdWarning(false);
+      setIdError("This ID belongs to a brother. Brothers don't sign in here.");
       return;
     }
 
@@ -366,13 +567,30 @@ export default function Kiosk() {
     }
 
     if (data) {
-      if (attendedIds.has(data.id)) {
+      if (attendedIds.has(data.id) || isQueued(eventId, { pnmId: data.id })) {
         setIdError("Already checked in to this event.");
         return;
+      }
+      if (requireProfile) {
+        const pr = await supabase
+          .from("rush_profiles")
+          .select("pnm_id")
+          .eq("pnm_id", data.id)
+          .maybeSingle();
+        // Can't verify (network): let them through rather than turn them away.
+        if (!pr.error && !pr.data) {
+          setProfileBlock(true);
+          return;
+        }
       }
       setExistingPnm(data);
       setStep("confirm");
     } else {
+      if (requireProfile) {
+        // Nobody with this ID exists, so no profile can be attached to it.
+        setProfileBlock(true);
+        return;
+      }
       setStep("form");
     }
   }
@@ -401,6 +619,12 @@ export default function Kiosk() {
       showSuccess(existingPnm.first_name, !existingPnm.photo_path);
       resetForm();
     } catch (e) {
+      if (isNetworkError(e) && saveOffline({ kind: "existing", pnm_id: existingPnm.id,
+        name: `${existingPnm.first_name} ${existingPnm.last_name}` })) {
+        showSuccess(existingPnm.first_name, !existingPnm.photo_path, true);
+        resetForm();
+        return;
+      }
       setIdError(e.message || "Check-in failed.");
       setSubmitting(false);
     }
@@ -483,6 +707,7 @@ export default function Kiosk() {
         return;
       }
     }
+    let createdId = null;
     try {
       // The trigger canonicalises psu_id and sets psu_id_unverified on write.
       let { data: pnm, error } = await supabase
@@ -512,6 +737,7 @@ export default function Kiosk() {
         throw error;
       }
 
+      createdId = pnm.id;
       if (pnm.psu_id_unverified) {
         const { error: rvErr } = await supabase.from("pnm_id_reviews").insert({
           pnm_id: pnm.id,
@@ -526,6 +752,18 @@ export default function Kiosk() {
       showSuccess(firstName.trim(), true);
       resetForm();
     } catch (e) {
+      const name = `${firstName.trim()} ${lastName.trim()}`;
+      if (isNetworkError(e) && saveOffline(
+        createdId
+          ? { kind: "existing", pnm_id: createdId, name }
+          : { kind: "new", name, person: {
+              psu_id: raw, first_name: firstName.trim(), last_name: lastName.trim(),
+              major: pickedMajor, year } },
+      )) {
+        showSuccess(firstName.trim(), true, true);
+        resetForm();
+        return;
+      }
       setIdError(e.message || "Submission failed.");
       setSubmitting(false);
     }
@@ -566,7 +804,11 @@ export default function Kiosk() {
         <button
           type="button"
           className="k-controls-btn"
-          onClick={() => setStationOpen(true)}
+          onClick={() => {
+            loadSettings(); // show the current shared value, not a stale one
+            refreshPending();
+            setStationOpen(true);
+          }}
           aria-haspopup="dialog"
         >
           <svg
@@ -607,6 +849,12 @@ export default function Kiosk() {
                     ? `Head to the ${sideName.toLowerCase()} photo station for your headshot.`
                     : "Your headshot is already on file. You're all set."}
                 </p>
+                {flash.queued && (
+                  <p className="k-queued-note">
+                    Saved on this laptop. It will sync when the connection is
+                    back.
+                  </p>
+                )}
                 <button
                   type="button"
                   className="q-btn q-btn-secondary q-btn-block k-btn"
@@ -668,7 +916,8 @@ export default function Kiosk() {
                           entry.
                         </strong>
                         <br />
-                        Clearing in {blockSeconds}s.
+                        Fill it out at <strong>{BRAND.profileUrl}</strong>, then
+                        sign in again. Clearing in {blockSeconds}s.
                       </span>
                       <button
                         type="button"
@@ -989,6 +1238,23 @@ export default function Kiosk() {
 
       <footer className="k-footer">
         <div className="k-stats">
+          {pending.some((p) => p.status === "pending") && (
+            <span className="k-pending" role="status">
+              {syncing ? "Syncing… " : ""}
+              {pending.filter((p) => p.status === "pending").length} check-in
+              {pending.filter((p) => p.status === "pending").length === 1 ? "" : "s"}{" "}
+              waiting to sync
+            </span>
+          )}
+          {pending.some((p) => p.status === "failed") && (
+            <span className="k-pending k-pending-bad">
+              {pending.filter((p) => p.status === "failed").length} couldn't sync,
+              see Station controls
+            </span>
+          )}
+          {requireProfile && (
+            <span className="k-required">Rush profile required</span>
+          )}
           <span>
             <strong>{checkedInCount}</strong> checked in{" "}
             <span className="k-scope">(both sides)</span>
@@ -1026,6 +1292,84 @@ export default function Kiosk() {
           { to: "/queue/right", label: "Right photo queue", hint: waiting.right },
         ]}
         note="All kiosk stations share the same live database, so check-ins appear everywhere instantly."
+        extra={
+          <div className="k-ctl">
+            <label className="k-switch">
+              <input
+                type="checkbox"
+                checked={requireProfile}
+                disabled={settingBusy}
+                onChange={(e) => toggleRequireProfile(e.target.checked)}
+              />
+              <span>Require rush profiles</span>
+            </label>
+            <p className="q-settings-note">
+              Takes effect immediately on every station (no Save needed).
+              Candidates without a rush profile are turned away at the ID step.
+            </p>
+            {settingError && (
+              <p className="k-error" role="alert">
+                {settingError}
+              </p>
+            )}
+
+            <div className="k-ctl-sync">
+              <span>
+                Saved on this laptop:{" "}
+                <strong>
+                  {pending.filter((p) => p.status === "pending").length}
+                </strong>{" "}
+                waiting
+                {pending.some((p) => p.status !== "pending") &&
+                  `, ${pending.filter((p) => p.status !== "pending").length} need attention`}
+              </span>
+              <button
+                type="button"
+                className="q-btn q-btn-secondary"
+                onClick={flushQueue}
+                disabled={syncing || !pending.some((p) => p.status === "pending")}
+                aria-busy={syncing}
+              >
+                {syncing ? "Syncing…" : "Sync now"}
+              </button>
+            </div>
+            {pending
+              .filter((p) => p.status !== "pending")
+              .map((p) => (
+                <div key={p.qid} className="k-ctl-issue">
+                  <span>
+                    <strong>{p.name || p.person?.psu_id}</strong>
+                    {p.person?.psu_id ? ` (${p.person.psu_id})` : ""}: {p.reason}
+                  </span>
+                  <span className="k-ctl-issue-actions">
+                    {p.status === "failed" && (
+                      <button
+                        type="button"
+                        className="q-btn q-btn-quiet"
+                        onClick={() => {
+                          updateItem(p.qid, { status: "pending", reason: null });
+                          refreshPending();
+                          flushQueue();
+                        }}
+                      >
+                        Retry
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="q-btn q-btn-quiet"
+                      onClick={() => {
+                        removeItem(p.qid);
+                        refreshPending();
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </span>
+                </div>
+              ))}
+          </div>
+        }
       />
     </div>
   );
