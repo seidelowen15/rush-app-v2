@@ -1,9 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { timeAgo, initials, avatarColor } from "../lib/utils";
-import { NavBar } from "./Kiosk";
-import { getEventId } from "../components/AuthGate";
+import { BRAND } from "../lib/brand";
+import {
+  getEventId,
+  getEventLabel,
+  getStationId,
+  getSideLabel,
+  changeStationEvent,
+  signOutStation,
+} from "../components/AuthGate";
+import "../queue.css";
 
 const BUCKET = "pnm-photos";
 const SIGNED_TTL = 60 * 60; // 1 hour
@@ -44,7 +52,15 @@ export default function Queue({ side }) {
   const [newIds, setNewIds] = useState(new Set());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [removeError, setRemoveError] = useState(null);
+  const [removingId, setRemovingId] = useState(null);
+  const [announce, setAnnounce] = useState("");
   const navigate = useNavigate();
+  const canFullscreen =
+    typeof document !== "undefined" &&
+    !!document.fullscreenEnabled &&
+    !!document.documentElement.requestFullscreen;
 
   const fullName = (p) => (p ? `${p.first_name} ${p.last_name}` : "?");
   const rows = allRows.filter((r) => r.side === side);
@@ -64,10 +80,12 @@ export default function Queue({ side }) {
 
     if (error) {
       console.error("queue load failed", error);
+      setLoadError(true);
       setLoading(false);
       return [];
     }
     const list = data || [];
+    setLoadError(false);
     setAllRows(list);
     setLoading(false);
 
@@ -184,31 +202,61 @@ export default function Queue({ side }) {
     };
   }, [eventId, side]);
 
+  // iPhone Safari has no page fullscreen; the control is hidden there
+  // (canFullscreen) rather than offered and silently failing.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
   function toggleFullscreen() {
+    if (!canFullscreen) return;
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
+      document.documentElement.requestFullscreen().catch(() => {});
     } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
+      document.exitFullscreen().catch(() => {});
     }
+  }
+
+  async function refresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
+
+  function openCamera(pnmId) {
+    // Carry the side so the camera loads THIS queue, not the station's side.
+    navigate(`/camera?id=${pnmId}&side=${side}`);
   }
 
   // Removes the check-in for THIS event only. The pnms row and any photo are
   // left alone -- the person still exists and may have attended other nights.
-  async function deleteAttendance(attendanceId, e) {
-    e.stopPropagation();
-    if (!confirm("Remove this person from this event's check-in list?")) return;
+  async function deleteAttendance(attendanceId, name) {
+    if (!confirm(`Remove ${name} from this event's check-in list?`)) return;
+    setRemoveError(null);
+    setRemovingId(attendanceId);
     const { error } = await supabase
       .from("attendance")
       .delete()
       .eq("id", attendanceId);
-    if (error) alert("Remove failed: " + error.message);
+    setRemovingId(null);
+    if (error) {
+      setRemoveError(`Couldn't remove ${name}: ${error.message}`);
+      setAnnounce(`Remove failed for ${name}.`);
+    } else {
+      setAnnounce(`${name} removed from the ${side} queue.`);
+    }
     load();
   }
 
   const waiting = rows.filter((r) => !r.pnms?.photo_path);
   const done = rows.filter((r) => r.pnms?.photo_path);
+  const waitingBySide = {
+    left: allRows.filter((r) => r.side === "left" && !r.pnms?.photo_path).length,
+    right: allRows.filter((r) => r.side === "right" && !r.pnms?.photo_path)
+      .length,
+  };
+  const sideName = side === "left" ? "Left" : "Right";
 
   if (!eventId) {
     return (
@@ -219,291 +267,308 @@ export default function Queue({ side }) {
   }
 
   return (
-    <div className="page">
-      <NavBar
-        waiting={{
-          left: allRows.filter((r) => r.side === "left" && !r.pnms?.photo_path)
-            .length,
-          right: allRows.filter(
-            (r) => r.side === "right" && !r.pnms?.photo_path,
-          ).length,
-        }}
-      />
-      <Toast toasts={toasts} />
-      <div
-        className="content"
-        style={{ maxWidth: 640, margin: "0 auto", width: "100%" }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 16,
-          }}
-        >
-          <div className="stat-grid" style={{ flex: 1, marginBottom: 0 }}>
-            <div className="stat-card">
-              <div className="stat-num">{rows.length}</div>
-              <div className="stat-label">Checked in</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-num">{waiting.length}</div>
-              <div className="stat-label">Waiting for photo</div>
-            </div>
+    <div className="q-page">
+      <header className="q-header">
+        <div className="q-header-inner">
+          <div className="q-brandrow">
+            <span className="q-brandrow-left">
+              <span className="q-mark" aria-hidden="true">
+                {BRAND.mark}
+              </span>
+              <span>Photo queue</span>
+            </span>
           </div>
-          <button
-            onClick={async () => {
-              setRefreshing(true);
-              await load();
-              setRefreshing(false);
-            }}
-            disabled={refreshing}
-            style={{
-              marginLeft: 12,
-              whiteSpace: "nowrap",
-              background: "var(--navy)",
-              color: "rgba(255,255,255,0.7)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              padding: "8px 12px",
-              borderRadius: "var(--radius)",
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            {refreshing ? "Refreshing…" : "↻ Refresh"}
-          </button>
-          <button
-            className="fullscreen-btn"
-            onClick={toggleFullscreen}
-            style={{
-              marginLeft: 12,
-              whiteSpace: "nowrap",
-              background: "var(--navy)",
-              color: "rgba(255,255,255,0.7)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              padding: "8px 12px",
-              borderRadius: "var(--radius)",
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            {isFullscreen ? "⤡ Exit" : "⤢ Fullscreen"}
-          </button>
+          <h1 className="q-event">{getEventLabel()}</h1>
+          <p className="q-station">
+            Station {getStationId()} · {getSideLabel()} side
+          </p>
+          <nav className="q-tabs" aria-label="Queue side">
+            {["left", "right"].map((s) => {
+              const active = s === side;
+              const label = s === "left" ? "Left queue" : "Right queue";
+              return (
+                <Link
+                  key={s}
+                  to={`/queue/${s}`}
+                  className={`q-tab ${active ? "is-active" : ""}`}
+                  aria-current={active ? "page" : undefined}
+                >
+                  {label}
+                  <span className="q-tab-count">
+                    {waitingBySide[s]}
+                    <span className="q-sr-only"> waiting for photo</span>
+                  </span>
+                </Link>
+              );
+            })}
+          </nav>
         </div>
+      </header>
 
-        {loading ? (
-          <div
-            style={{
-              textAlign: "center",
-              padding: 40,
-              color: "var(--text3)",
-              fontSize: 13,
-            }}
-          >
-            Loading...
-          </div>
-        ) : rows.length === 0 ? (
-          <div
-            style={{
-              textAlign: "center",
-              padding: 48,
-              color: "var(--text3)",
-              fontSize: 13,
-            }}
-          >
-            No one checked in yet
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {waiting.length > 0 && (
-              <>
-                <div className="section-label">Waiting for photo</div>
-                {waiting.map((r, i) => {
-                  const p = r.pnms;
-                  const isNext = i === 0;
-                  const [abg, atxt] = avatarColor(r.pnm_id);
-                  const isNew = newIds.has(r.pnm_id);
-                  return (
-                    <div
-                      key={r.id}
-                      className={`queue-item ${isNext ? "is-next" : ""} ${isNew ? "new-entry" : ""}`}
-                      onClick={() => navigate(`/camera?id=${r.pnm_id}&side=${side}`)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <div
-                        style={{
-                          minWidth: 24,
-                          textAlign: "center",
-                          fontSize: 15,
-                          fontWeight: 700,
-                          color: isNext ? "var(--gold)" : "var(--text3)",
-                        }}
-                      >
-                        {i + 1}
-                      </div>
-                      <div
-                        className="avatar"
-                        style={{
-                          background: isNext ? "rgba(245,184,0,0.15)" : abg,
-                          color: isNext ? "var(--gold)" : atxt,
-                          border: isNext ? "2px solid var(--gold)" : "none",
-                        }}
-                      >
-                        {initials(fullName(p))}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            color: isNext ? "var(--gold)" : "var(--text)",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          {fullName(p)}
-                          {isNext && (
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 400,
-                                color: "rgba(245,184,0,0.7)",
-                              }}
-                            >
-                              — tap to photograph
-                            </span>
-                          )}
-                          {p?.psu_id_unverified && (
-                            <span className="pill pill-amber">ID flagged</span>
-                          )}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            color: isNext
-                              ? "rgba(255,255,255,0.6)"
-                              : "var(--text2)",
-                            marginTop: 2,
-                          }}
-                        >
-                          {p?.psu_id} · {p?.major} · {p?.year}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: isNext
-                              ? "rgba(255,255,255,0.4)"
-                              : "var(--text3)",
-                          }}
-                        >
-                          {timeAgo(r.signed_in_at)}
-                        </span>
-                        {isNext && (
-                          <span className="pill pill-gold">Take photo →</span>
-                        )}
-                        <button
-                          className="delete-btn"
-                          onClick={(e) => deleteAttendance(r.id, e)}
-                          title="Remove"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-
-            {done.length > 0 && (
-              <>
-                <div className="section-label" style={{ marginTop: 8 }}>
-                  Photos taken
-                </div>
-                {done.map((r) => {
-                  const p = r.pnms;
-                  const [abg, atxt] = avatarColor(r.pnm_id);
-                  const url = signed[p.photo_path];
-                  return (
-                    <div key={r.id} className="queue-item is-done">
-                      <div
-                        style={{
-                          minWidth: 24,
-                          textAlign: "center",
-                          fontSize: 15,
-                          color: "var(--green-text)",
-                        }}
-                      >
-                        ✓
-                      </div>
-                      {url ? (
-                        <img
-                          src={url}
-                          alt={fullName(p)}
-                          style={{
-                            width: 38,
-                            height: 38,
-                            borderRadius: "50%",
-                            objectFit: "cover",
-                            flexShrink: 0,
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className="avatar"
-                          style={{ background: abg, color: atxt }}
-                        >
-                          {initials(fullName(p))}
-                        </div>
-                      )}
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, color: "var(--text)" }}>
-                          {fullName(p)}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            color: "var(--text2)",
-                            marginTop: 2,
-                          }}
-                        >
-                          {p?.major} · {p?.year}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <span className="pill pill-green">Done</span>
-                        <button
-                          className="delete-btn"
-                          onClick={(e) => deleteAttendance(r.id, e)}
-                          title="Remove"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        )}
+      <Toast toasts={toasts} />
+      <div className="q-sr-only" role="status" aria-live="polite">
+        {announce}
       </div>
+
+      <main className="q-main">
+        <section className="q-section" aria-label={`${sideName} queue totals`}>
+          <div className="q-summary">
+            <div className="q-metrics">
+              <div className="q-metric">
+                <span className="q-metric-num">{rows.length}</span>
+                <span className="q-metric-label">Checked in</span>
+              </div>
+              <div className="q-metric">
+                <span className="q-metric-num">{waiting.length}</span>
+                <span className="q-metric-label">Waiting for photo</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="q-btn q-btn-secondary"
+              onClick={refresh}
+              disabled={refreshing}
+              aria-busy={refreshing}
+            >
+              <span aria-hidden="true">↻</span>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          <p className="q-scope">
+            Counts for the {sideName} queue at this event.
+          </p>
+          {loadError && (
+            <div className="q-alert" role="alert">
+              <span className="q-alert-msg">
+                Couldn't reach the server. The list may be out of date.
+              </span>
+              <button
+                type="button"
+                className="q-btn q-btn-secondary"
+                onClick={refresh}
+                disabled={refreshing}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+          {removeError && (
+            <div className="q-alert" role="alert">
+              <span className="q-alert-msg">{removeError}</span>
+              <button
+                type="button"
+                className="q-btn q-btn-secondary"
+                onClick={() => setRemoveError(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="q-section" aria-labelledby="q-waiting-title">
+          <div className="q-section-head">
+            <h2 className="q-section-title" id="q-waiting-title">
+              Waiting for photo
+            </h2>
+            {waiting.length > 0 && (
+              <span className="q-section-count">{waiting.length}</span>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="q-empty" aria-busy="true">
+              Loading the {sideName.toLowerCase()} queue…
+            </div>
+          ) : waiting.length === 0 && loadError && rows.length === 0 ? null : waiting.length === 0 ? (
+            <div className="q-empty">
+              <div className="q-empty-title">
+                {rows.length === 0 ? "No one checked in yet" : "All caught up"}
+              </div>
+              {rows.length === 0
+                ? `New ${sideName.toLowerCase()}-side check-ins appear here automatically.`
+                : "Everyone in this queue has a photo."}
+            </div>
+          ) : (
+            <ol className="q-list">
+              {waiting.map((r, i) => {
+                const p = r.pnms;
+                const name = fullName(p);
+                const isNext = i === 0;
+                const [abg, atxt] = avatarColor(r.pnm_id);
+                return (
+                  <li
+                    key={r.id}
+                    className={`q-card ${isNext ? "is-next" : ""} ${
+                      newIds.has(r.pnm_id) ? "is-new" : ""
+                    }`}
+                  >
+                    <div className="q-card-top">
+                      {isNext ? (
+                        <span className="q-upnext">
+                          <span className="q-upnext-dot" aria-hidden="true" />
+                          Up next · #{i + 1}
+                        </span>
+                      ) : (
+                        <span className="q-pos">#{i + 1}</span>
+                      )}
+                      <span>Checked in {timeAgo(r.signed_in_at)}</span>
+                    </div>
+                    <div className="q-who">
+                      <div
+                        className="q-avatar"
+                        style={{ background: abg, color: atxt }}
+                        aria-hidden="true"
+                      >
+                        {initials(name)}
+                      </div>
+                      <div className="q-who-text">
+                        <div className="q-name">{name}</div>
+                        <div className="q-id">
+                          <span>{p?.psu_id}</span>
+                          {p?.psu_id_unverified && (
+                            <span className="q-flag">ID flagged</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="q-meta">
+                      {p?.major || "—"} · {p?.year || "—"}
+                    </div>
+                    <button
+                      type="button"
+                      className={`q-btn q-btn-block q-btn-lg ${
+                        isNext ? "q-btn-primary" : "q-btn-outline"
+                      }`}
+                      onClick={() => openCamera(r.pnm_id)}
+                      aria-label={`Take photo of ${name}`}
+                    >
+                      Take photo
+                    </button>
+                    <div className="q-card-remove">
+                      <button
+                        type="button"
+                        className="q-btn q-btn-quiet"
+                        onClick={() => deleteAttendance(r.id, name)}
+                        disabled={removingId === r.id}
+                        aria-label={`Remove ${name} from this event's check-ins`}
+                      >
+                        {removingId === r.id ? "Removing…" : "Remove from queue"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </section>
+
+        {done.length > 0 && (
+          <section className="q-section" aria-labelledby="q-done-title">
+            <div className="q-section-head">
+              <h2 className="q-section-title" id="q-done-title">
+                Photos taken
+              </h2>
+              <span className="q-section-count">{done.length}</span>
+            </div>
+            <ul className="q-done-list">
+              {done.map((r) => {
+                const p = r.pnms;
+                const name = fullName(p);
+                const [abg, atxt] = avatarColor(r.pnm_id);
+                const url = signed[p.photo_path];
+                return (
+                  <li key={r.id} className="q-done-row">
+                    {url ? (
+                      <img
+                        src={url}
+                        alt=""
+                        className="q-avatar q-avatar-sm"
+                      />
+                    ) : (
+                      <div
+                        className="q-avatar q-avatar-sm"
+                        style={{ background: abg, color: atxt }}
+                        aria-hidden="true"
+                      >
+                        {initials(name)}
+                      </div>
+                    )}
+                    <div className="q-done-main">
+                      <div className="q-done-name">{name}</div>
+                      <div className="q-done-meta">
+                        {p?.major} · {p?.year}
+                      </div>
+                      <div className="q-done-status">
+                        <span className="q-check" aria-hidden="true">
+                          ✓
+                        </span>
+                        Photo taken
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="q-icon-btn"
+                      onClick={() => deleteAttendance(r.id, name)}
+                      disabled={removingId === r.id}
+                      aria-label={`Remove ${name} from this event's check-ins`}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        <details className="q-settings">
+          <summary>
+            Station settings &amp; kiosk
+            <span className="q-chevron" aria-hidden="true">
+              ▾
+            </span>
+          </summary>
+          <div className="q-settings-body">
+            <p className="q-settings-row">
+              {getEventLabel()} · Station {getStationId()} · {getSideLabel()}{" "}
+              side
+            </p>
+            <Link to="/kiosk" className="q-btn q-btn-navy q-btn-block">
+              Open sign-in kiosk
+            </Link>
+            <button
+              type="button"
+              className="q-btn q-btn-secondary q-btn-block"
+              onClick={changeStationEvent}
+            >
+              Change event
+            </button>
+            {canFullscreen ? (
+              <button
+                type="button"
+                className="q-btn q-btn-secondary q-btn-block"
+                onClick={toggleFullscreen}
+                aria-pressed={isFullscreen}
+              >
+                {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              </button>
+            ) : (
+              <p className="q-settings-note">
+                Fullscreen isn't available in this browser (iPhone Safari
+                doesn't support it).
+              </p>
+            )}
+            <button
+              type="button"
+              className="q-btn q-btn-secondary q-btn-block"
+              onClick={signOutStation}
+            >
+              Sign out this station
+            </button>
+          </div>
+        </details>
+      </main>
     </div>
   );
 }

@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { initials, avatarColor } from "../lib/utils";
-import { NavBar } from "./Kiosk";
-
-import { getEventId, getSide } from "../components/AuthGate";
+import { BRAND } from "../lib/brand";
+import {
+  getEventId,
+  getEventLabel,
+  getStationId,
+  getSide,
+} from "../components/AuthGate";
+import "../queue.css";
 
 const BUCKET = "pnm-photos";
 
@@ -28,6 +33,9 @@ export default function Camera() {
   const [uploading, setUploading] = useState(false);
   const [camError, setCamError] = useState(null);
   const [successName, setSuccessName] = useState(null);
+  const [saveError, setSaveError] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const savingRef = useRef(false); // blocks a double tap before re-render
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const confirmBtnRef = useRef(null);
@@ -50,8 +58,10 @@ export default function Camera() {
 
       if (error) {
         console.error("camera load failed", error);
+        setLoadError(true);
         return;
       }
+      setLoadError(false);
       const rows = data || [];
       setWaiting(rows);
 
@@ -175,7 +185,9 @@ export default function Camera() {
   }
 
   async function confirm(e) {
-    if (!pnm || !captured) return;
+    if (!pnm || !captured || savingRef.current) return;
+    savingRef.current = true;
+    setSaveError(null);
     setUploading(true);
     try {
       const res = await fetch(captured);
@@ -204,17 +216,21 @@ export default function Camera() {
       setTimeout(() => {
         setSuccessName(null);
         const remaining = waiting.filter((r) => r.pnm_id !== pnm.id);
+        savingRef.current = false;
         if (remaining.length > 0)
           navigate(`/camera?id=${remaining[0].pnm_id}&side=${side}`);
         else navigate(`/queue/${side}`);
       }, 1800);
     } catch (err) {
-      alert("Save failed: " + (err.message || "unknown error"));
+      setSaveError(err.message || "unknown error");
       setUploading(false);
+      savingRef.current = false;
     }
   }
 
   const nextUp = waiting.find((r) => r.pnm_id !== pnm?.id);
+  const others = waiting.filter((r) => r.pnm_id !== pnm?.id);
+  const sideName = side === "left" ? "Left" : "Right";
 
   if (!eventId) {
     return (
@@ -224,298 +240,258 @@ export default function Camera() {
     );
   }
 
-  if (!pnm && waiting.length === 0) {
-    return (
-      <div className="page">
-        <NavBar waiting={{}} />
-        <div
-          className="content"
-          style={{
-            maxWidth: 500,
-            margin: "0 auto",
-            textAlign: "center",
-            paddingTop: 60,
-          }}
-        >
-          <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: 18,
-              marginBottom: 8,
-              color: "var(--navy)",
-            }}
-          >
-            Queue is empty
-          </div>
-          <div
-            style={{ fontSize: 13, color: "var(--text2)", marginBottom: 20 }}
-          >
-            All photos taken, or no one has checked in yet.
-          </div>
-          <button className="btn btn-navy" onClick={() => navigate(`/queue/${side}`)}>
-            Back to queue
-          </button>
+  const header = (
+    <header className="q-header">
+      <div className="q-header-inner">
+        <div className="q-brandrow">
+          <span className="q-brandrow-left">
+            <span className="q-mark" aria-hidden="true">
+              {BRAND.mark}
+            </span>
+            <span>Photo station</span>
+          </span>
+          <Link to={`/queue/${side}`} className="q-back">
+            ← {sideName} queue
+          </Link>
         </div>
+        <h1 className="q-event">{getEventLabel()}</h1>
+        <p className="q-station">
+          Station {getStationId()} · Photographing the {sideName.toLowerCase()}{" "}
+          queue · {waiting.length} waiting
+        </p>
+      </div>
+    </header>
+  );
+
+  // A save that just finished takes precedence: the realtime reload removes
+  // the photographed person from `waiting` before the hand-off timer fires.
+  if (successName) {
+    return (
+      <div className="q-page">
+        {header}
+        <main className="q-main">
+          <div className="q-success" role="status">
+            <span className="q-check" aria-hidden="true">
+              ✓
+            </span>
+            Photo saved for {successName}. Loading the next person…
+          </div>
+        </main>
       </div>
     );
   }
 
-  return (
-    <div className="page">
-      <NavBar waiting={{ [side]: waiting.length }} />
-      <div
-        className="content"
-        style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}
-      >
-        {pnm && (
-          <div
-            className="banner banner-navy"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginBottom: 14,
-              borderLeft: `4px solid var(--gold)`,
-            }}
+  if (!pnm && waiting.length === 0) {
+    return (
+      <div className="q-page">
+        {header}
+        <main className="q-main">
+          {loadError ? (
+            <div className="q-alert" role="alert">
+              <span className="q-alert-msg">
+                Couldn't load the queue. Check the connection.
+              </span>
+              <button
+                type="button"
+                className="q-btn q-btn-secondary"
+                onClick={load}
+              >
+                Try again
+              </button>
+            </div>
+          ) : (
+            <div className="q-empty">
+              <div className="q-empty-title">Queue is empty</div>
+              All photos taken, or no one has checked in yet.
+            </div>
+          )}
+          <button
+            type="button"
+            className="q-btn q-btn-navy q-btn-block q-btn-lg"
+            onClick={() => navigate(`/queue/${side}`)}
           >
-            <div
-              className="avatar"
-              style={{
-                background: "rgba(245,184,0,0.15)",
-                color: "var(--gold)",
-                border: "2px solid var(--gold)",
-                width: 44,
-                height: 44,
-                fontSize: 14,
-              }}
-            >
-              {initials(fullName(pnm))}
-            </div>
-            <div style={{ flex: 1 }}>
+            Back to {sideName.toLowerCase()} queue
+          </button>
+        </main>
+      </div>
+    );
+  }
+
+  const [abg, atxt] = avatarColor(pnm?.id || "x");
+
+  return (
+    <div className="q-page">
+      {header}
+      <main className="q-main">
+        {pnm ? (
+          <section className="q-section" aria-label="Now photographing">
+            <div className="q-person">
               <div
-                style={{ fontWeight: 700, fontSize: 15, color: "var(--gold)" }}
+                className="q-avatar q-avatar-lg"
+                style={{ background: abg, color: atxt }}
+                aria-hidden="true"
               >
-                {fullName(pnm)}
+                {initials(fullName(pnm))}
               </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "rgba(255,255,255,0.6)",
-                  marginTop: 2,
-                }}
-              >
-                {pnm.psu_id} · {pnm.major} · {pnm.year}
+              <div className="q-who-text">
+                <div className="q-name">{fullName(pnm)}</div>
+                <div className="q-id">
+                  <span>{pnm.psu_id}</span>
+                  {pnm.psu_id_unverified && (
+                    <span className="q-flag">Verify ID</span>
+                  )}
+                </div>
+                <div className="q-meta">
+                  {pnm.major || "—"} · {pnm.year || "—"}
+                </div>
               </div>
             </div>
-            {pnm.psu_id_unverified && (
-              <span className="pill pill-amber">Verify ID</span>
-            )}
-            <div
-              style={{
-                textAlign: "right",
-                fontSize: 12,
-                color: "rgba(255,255,255,0.4)",
-              }}
-            >
-              {waiting.length - 1} more waiting
-            </div>
+          </section>
+        ) : (
+          <div className="q-alert" role="alert">
+            <span className="q-alert-msg">
+              This person isn't waiting in the {sideName.toLowerCase()} queue
+              anymore. Pick someone below.
+            </span>
           </div>
         )}
 
-        {successName && (
-          <div
-            className="banner banner-gold"
-            style={{
-              marginBottom: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span style={{ fontSize: 18 }}>✓</span> Photo saved for{" "}
-            {successName} — loading next person...
+        {saveError && (
+          <div className="q-alert" role="alert">
+            <span className="q-alert-msg">
+              Save failed: {saveError}. The photo is still here; try again.
+            </span>
           </div>
         )}
 
         <canvas ref={canvasRef} style={{ display: "none" }} />
-        <div
-          className="card"
-          style={{
-            padding: 0,
-            overflow: "hidden",
-            borderTop: `3px solid var(--gold)`,
-          }}
-        >
-          {captured ? (
-            <>
-              <img
-                src={captured}
-                alt="Preview"
-                style={{
-                  width: "100%",
-                  display: "block",
-                  maxHeight: 380,
-                  objectFit: "cover",
-                }}
-              />
-              <div style={{ display: "flex", gap: 8, padding: 12 }}>
-                <button
-                  className="btn"
-                  style={{ flex: 1 }}
-                  onClick={retake}
-                  disabled={uploading}
-                >
-                  Retake
-                </button>
-                <button
-                  ref={confirmBtnRef}
-                  className="btn btn-gold"
-                  style={{ flex: 2 }}
-                  onClick={confirm}
-                  disabled={uploading}
-                >
-                  {uploading ? "Saving..." : "✓ Use this photo"}
-                </button>
-              </div>
-            </>
-          ) : stream ? (
-            <>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{
-                  width: "100%",
-                  display: "block",
-                  maxHeight: 380,
-                  objectFit: "cover",
-                }}
-              />
-              <div style={{ padding: 12 }}>
-                <button
-                  className="btn btn-navy"
-                  style={{ width: "100%", padding: "11px 0", fontSize: 15 }}
-                  onClick={snap}
-                >
-                  Take photo
-                </button>
-              </div>
-            </>
-          ) : (
-            <div style={{ padding: 32, textAlign: "center" }}>
-              {camError && (
-                <div
-                  className="banner banner-amber"
-                  style={{ marginBottom: 16, textAlign: "left" }}
-                >
-                  {camError}
-                </div>
-              )}
-              <button
-                className="btn btn-navy"
-                style={{ width: "100%", padding: "11px 0", marginBottom: 12 }}
-                onClick={startCamera}
-              >
-                Open camera
-              </button>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "var(--text3)",
-                  marginBottom: 10,
-                }}
-              >
-                or upload
-              </div>
-              <label
-                className="btn"
-                style={{ display: "inline-block", cursor: "pointer" }}
-              >
-                Upload photo
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handleUpload}
-                  style={{ display: "none" }}
+        {pnm && (
+          <div className="q-capture">
+            {captured ? (
+              <>
+                <img
+                  src={captured}
+                  alt={`Preview of ${fullName(pnm)}'s photo`}
+                  className="q-capture-media"
                 />
-              </label>
-            </div>
-          )}
-        </div>
-
-        {nextUp && (
-          <div
-            style={{
-              marginTop: 10,
-              padding: "10px 14px",
-              background: "var(--bg)",
-              border: "0.5px solid var(--border)",
-              borderRadius: "var(--radius)",
-              fontSize: 13,
-              color: "var(--text2)",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span
-              style={{
-                color: "var(--text3)",
-                fontSize: 11,
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-              }}
-            >
-              Next up:
-            </span>
-            <strong style={{ color: "var(--text)" }}>
-              {fullName(nextUp.pnms)}
-            </strong>
-            <span style={{ color: "var(--text3)" }}>
-              · {nextUp.pnms?.major}
-            </span>
-          </div>
-        )}
-
-        {waiting.length > 1 && (
-          <div style={{ marginTop: 10 }}>
-            <div className="section-label" style={{ marginBottom: 6 }}>
-              Others waiting
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {waiting
-                .filter((r) => r.pnm_id !== pnm?.id)
-                .slice(0, 3)
-                .map((r) => (
-                  <div
-                    key={r.id}
-                    onClick={() => navigate(`/camera?id=${r.pnm_id}&side=${side}`)}
-                    style={{
-                      padding: "8px 12px",
-                      background: "var(--bg)",
-                      border: "0.5px solid var(--border)",
-                      borderRadius: "var(--radius)",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      color: "var(--text2)",
-                      display: "flex",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span>{fullName(r.pnms)}</span>
-                    <span style={{ color: "var(--text3)" }}>
-                      {r.pnms?.major}
-                    </span>
+                <div className="q-capture-actions">
+                  <div className="q-capture-row">
+                    <button
+                      type="button"
+                      className="q-btn q-btn-secondary q-btn-lg"
+                      onClick={retake}
+                      disabled={uploading}
+                    >
+                      Retake
+                    </button>
+                    <button
+                      ref={confirmBtnRef}
+                      type="button"
+                      className="q-btn q-btn-primary q-btn-lg"
+                      onClick={confirm}
+                      disabled={uploading}
+                      aria-busy={uploading}
+                    >
+                      {uploading ? "Saving…" : "✓ Use this photo"}
+                    </button>
                   </div>
-                ))}
-            </div>
+                </div>
+              </>
+            ) : stream ? (
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="q-capture-media"
+                />
+                <div className="q-capture-actions">
+                  <button
+                    type="button"
+                    className="q-btn q-btn-primary q-btn-block q-btn-lg"
+                    onClick={snap}
+                  >
+                    Take photo
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="q-capture-empty">
+                {camError && (
+                  <div className="q-alert" role="alert">
+                    <span className="q-alert-msg">{camError}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="q-btn q-btn-primary q-btn-block q-btn-lg"
+                  onClick={startCamera}
+                >
+                  Open camera
+                </button>
+                <label className="q-btn q-btn-secondary q-btn-block q-upload-label">
+                  Upload photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleUpload}
+                    className="q-sr-only"
+                  />
+                </label>
+              </div>
+            )}
           </div>
         )}
-      </div>
+
+        {others.length > 0 && (
+          <section className="q-section" aria-labelledby="q-others-title">
+            <div className="q-section-head">
+              <h2 className="q-section-title" id="q-others-title">
+                {pnm ? "Next in line" : "Waiting for photo"}
+              </h2>
+              <span className="q-section-count">{others.length}</span>
+            </div>
+            <ul className="q-next-list">
+              {others.slice(0, 4).map((r, i) => {
+                const [bg, fg] = avatarColor(r.pnm_id);
+                return (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      className="q-next-row"
+                      onClick={() =>
+                        navigate(`/camera?id=${r.pnm_id}&side=${side}`)
+                      }
+                      aria-label={`Photograph ${fullName(r.pnms)} instead`}
+                    >
+                      <div
+                        className="q-avatar q-avatar-sm"
+                        style={{ background: bg, color: fg }}
+                        aria-hidden="true"
+                      >
+                        {initials(fullName(r.pnms))}
+                      </div>
+                      <span className="q-done-main">
+                        {i === 0 && nextUp && (
+                          <span className="q-next-label">Up next</span>
+                        )}
+                        <span className="q-done-name" style={{ display: "block" }}>
+                          {fullName(r.pnms)}
+                        </span>
+                        <span className="q-done-meta" style={{ display: "block" }}>
+                          {r.pnms?.major}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+      </main>
     </div>
   );
 }

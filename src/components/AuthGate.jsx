@@ -34,6 +34,22 @@ export function clearEvent() {
   localStorage.removeItem(EVENT_LABEL);
 }
 
+// Same behavior as the kiosk top bar's "change event" and "Sign out", shared
+// so the photo queue's settings section does exactly the same thing.
+export function changeStationEvent() {
+  if (!confirm("Change event for this station?")) return;
+  clearEvent();
+  location.reload();
+}
+export async function signOutStation() {
+  if (!confirm("Sign this station out?")) return;
+  clearEvent();
+  localStorage.removeItem(STATION_KEY);
+  localStorage.removeItem(SIDE_KEY);
+  await supabase.auth.signOut();
+  location.reload();
+}
+
 const box = {
   minHeight: "100vh",
   display: "flex",
