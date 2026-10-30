@@ -603,9 +603,6 @@ export default function Kiosk() {
                       handleSubmitNew();
                     }}
                   >
-                    <p className="k-step-title">
-                      First time here? Tell us a bit about you.
-                    </p>
                     <div className="k-grid2">
                       <label className="q-field">
                         <span className="k-label">First name</span>

@@ -108,7 +108,6 @@
 }
 .k-form, .k-step { display: flex; flex-direction: column; gap: 10px; }
 .k-step { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--k-border); gap: 12px; }
-.k-step-title { font-weight: 700; color: var(--q-text); }
 .k-label { font-size: 15px; font-weight: 700; color: var(--q-text); padding: 0; }
 .k-input {
   width: 100%;
