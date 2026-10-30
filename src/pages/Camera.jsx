@@ -28,11 +28,10 @@ export default function Camera() {
 
   const fullName = (p) => (p ? `${p.first_name} ${p.last_name}` : "");
 
-  useEffect(() => {
-    async function load() {
+  // Attendees at THIS event who have never been photographed.
+  // photo_path lives on pnms, so one headshot per person, ever.
+  async function load() {
       if (!eventId) return;
-      // Attendees at THIS event who have never been photographed.
-      // photo_path lives on pnms, so one headshot per person, ever.
       const { data, error } = await supabase
         .from("attendance")
         .select(
@@ -60,8 +59,25 @@ export default function Camera() {
         setAttendance(null);
         setPnm(null);
       }
-    }
+  }
+
+  useEffect(() => {
     load();
+  }, [targetPnmId, eventId]);
+
+  // Same iOS resume problem as the queue: re-pull when the page comes back
+  // instead of making the photographer reload. Keyed on the same attendance
+  // id, so a photo already captured on screen is not discarded.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
   }, [targetPnmId, eventId]);
 
   useEffect(() => {
