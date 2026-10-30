@@ -595,3 +595,18 @@
   color: var(--gold);
   font-weight: 700;
 }
+
+/* ── Radio groups styled as buttons (side, event, year) ── */
+.q-radio-label { display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
+.q-option.q-radio-label { align-items: flex-start; justify-content: center; }
+.q-radio { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.q-radio-label:has(.q-radio:focus-visible) { outline: 3px solid #2f6fe4; outline-offset: 2px; }
+.q-past-warn {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--amber-bg, #faeeda);
+  border: 1px solid var(--amber-border, #ef9f27);
+  color: var(--amber-text, #633806);
+  font-size: 14px;
+}

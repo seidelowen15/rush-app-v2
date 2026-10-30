@@ -53,6 +53,12 @@ export default function StationControls({
       return;
     }
     setEvents(data || []);
+    // Fill in the stored event's date so the past-event warning can show.
+    setFormEvent((cur) => {
+      if (!cur) return cur;
+      const ev = (data || []).find((e) => e.id === cur.id);
+      return ev ? { ...cur, iso_date: ev.iso_date } : cur;
+    });
   }
 
   // Reset the form to the stored configuration each time the sheet opens.
@@ -66,6 +72,11 @@ export default function StationControls({
     setConfirmSignOut(false);
     loadEvents();
   }, [open]);
+
+  // en-CA = YYYY-MM-DD in local time (same rule as the setup screen).
+  const today = new Date().toLocaleDateString("en-CA");
+  const pastSelected =
+    !!formEvent?.iso_date && formEvent.iso_date < today;
 
   function toggleFullscreen() {
     if (!canFullscreen) return;
@@ -144,18 +155,23 @@ export default function StationControls({
             <legend className="q-field-label">Side</legend>
             <div className="q-seg">
               {["left", "right"].map((s) => (
-                <button
+                <label
                   key={s}
-                  type="button"
-                  className={`q-seg-btn ${formSide === s ? "is-active" : ""}`}
-                  aria-pressed={formSide === s}
-                  onClick={() => {
-                    setFormSide(s);
-                    setFormError("");
-                  }}
+                  className={`q-seg-btn q-radio-label ${formSide === s ? "is-active" : ""}`}
                 >
+                  <input
+                    type="radio"
+                    name="station-side"
+                    value={s}
+                    checked={formSide === s}
+                    onChange={() => {
+                      setFormSide(s);
+                      setFormError("");
+                    }}
+                    className="q-radio"
+                  />
                   {s === "left" ? "Left" : "Right"}
-                </button>
+                </label>
               ))}
             </div>
             <span className="q-field-hint">
@@ -183,35 +199,52 @@ export default function StationControls({
             ) : (
               <div className="q-options">
                 {events.map((ev) => {
-                  const tonight =
-                    ev.iso_date === new Date().toLocaleDateString("en-CA");
+                  const tonight = ev.iso_date === today;
+                  const past = !!ev.iso_date && ev.iso_date < today;
                   const sel = formEvent?.id === ev.id;
                   return (
-                    <button
+                    <label
                       key={ev.id}
-                      type="button"
-                      className={`q-option ${sel ? "is-active" : ""}`}
-                      aria-pressed={sel}
-                      onClick={() => {
-                        setFormEvent({ id: ev.id, label: ev.label });
-                        setFormError("");
-                      }}
+                      className={`q-option q-radio-label ${sel ? "is-active" : ""}`}
                     >
+                      <input
+                        type="radio"
+                        name="station-event"
+                        value={ev.id}
+                        checked={sel}
+                        onChange={() => {
+                          setFormEvent({
+                            id: ev.id,
+                            label: ev.label,
+                            iso_date: ev.iso_date,
+                          });
+                          setFormError("");
+                        }}
+                        className="q-radio"
+                      />
                       <span className="q-option-label">{ev.label}</span>
                       <span className="q-option-meta">
                         {tonight
                           ? `Tonight · ${ev.iso_date}`
-                          : ev.iso_date || "no date"}
+                          : past
+                            ? `Past · ${ev.iso_date}`
+                            : ev.iso_date || "no date"}
                       </span>
                       {sel && (
                         <span className="q-option-check" aria-hidden="true">
                           ✓
                         </span>
                       )}
-                    </button>
+                    </label>
                   );
                 })}
               </div>
+            )}
+            {pastSelected && (
+              <p className="q-past-warn" role="status">
+                {formEvent.label} was on {formEvent.iso_date}. Check-ins from
+                this station will be recorded under that past event.
+              </p>
             )}
           </fieldset>
 
