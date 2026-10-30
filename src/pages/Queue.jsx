@@ -150,12 +150,9 @@ export default function Queue({ side }) {
       )
       .on(
         "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "attendance",
-          filter: `event_id=eq.${eventId}`,
-        },
+        // Supabase realtime cannot filter DELETE events; a filtered DELETE
+        // subscription never fires. Reload on any attendance delete.
+        { event: "DELETE", schema: "public", table: "attendance" },
         () => load(),
       )
       // photo_path lives on pnms, which is in no attendance subscription. Without

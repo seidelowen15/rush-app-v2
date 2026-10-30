@@ -185,7 +185,16 @@ export default function AuthGate({ children }) {
     // rush events run in the evening in Eastern time, and after 8pm EDT the UTC
     // date is already tomorrow, which would reject every correct event.
     const today = new Date().toLocaleDateString("en-CA");
-    if (data.iso_date && data.iso_date !== today) {
+    // Only enforce when some event is dated today (i.e. during rush week).
+    // Outside rush there is no "right" event, and clearing here sent every
+    // reload back to station setup.
+    const { data: todays } = await supabase
+      .from("rush_events")
+      .select("id")
+      .eq("iso_date", today)
+      .limit(1);
+    const rushNight = (todays || []).length > 0;
+    if (rushNight && data.iso_date && data.iso_date !== today) {
       clearEvent();
       setError(
         `This station was set to "${data.label}" (${data.iso_date}), which is not today. Pick tonight's event.`,
