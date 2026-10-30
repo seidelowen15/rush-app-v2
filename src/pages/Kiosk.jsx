@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { BRAND } from "../lib/brand";
+import { levenshtein } from "../lib/utils";
 import {
   getEventId,
   getEventLabel,
@@ -103,6 +104,7 @@ export default function Kiosk() {
   const [profileBlock, setProfileBlock] = useState(false); // no rush profile on file
   const [blockSeconds, setBlockSeconds] = useState(10);
   const [canonical, setCanonical] = useState(null);
+  const [dupMatches, setDupMatches] = useState([]); // likely existing records
   const [existingPnm, setExistingPnm] = useState(null);
   const [checking, setChecking] = useState(false); // ID lookup in flight
   const [formError, setFormError] = useState("");
@@ -222,7 +224,77 @@ export default function Kiosk() {
     setExistingPnm(null);
     setSubmitting(false);
     setFormError("");
+    setDupMatches([]);
     focusId();
+  }
+
+  // Keep the names typed so far; just reopen the ID field for correction.
+  function editId() {
+    setStep("id");
+    setIdError("");
+    setIdWarning(false);
+    setOffline(false);
+    setCanonical(null);
+    setExistingPnm(null);
+    setDupMatches([]);
+    setFormError("");
+    focusId();
+  }
+
+  // Duplicate guard. FA26 had 7 hand-merged duplicates: a mistyped ID that
+  // matched nobody created a second record for someone already in the
+  // system. Before creating a new person, look for an existing one with the
+  // same name, or the same first OR last name and an ID within 2 typos.
+  // Read-only; a failed check never blocks a check-in.
+  async function findLikelyDuplicates(first, last, enteredId) {
+    const esc = (v) => v.replace(/[\\%_]/g, (c) => "\\" + c);
+    const cols = "id, psu_id, first_name, last_name, major, year, photo_path";
+    const norm = (v) => (v || "").trim().toLowerCase();
+    try {
+      const [byLast, byFirst] = await Promise.all([
+        supabase.from("pnms").select(cols).ilike("last_name", esc(last)).limit(50),
+        supabase.from("pnms").select(cols).ilike("first_name", esc(first)).limit(50),
+      ]);
+      if (byLast.error) throw byLast.error;
+      if (byFirst.error) throw byFirst.error;
+      const id = norm(enteredId);
+      const close = (p) => id && levenshtein(id, norm(p.psu_id)) <= 2;
+      const seen = new Map();
+      for (const p of [...(byLast.data || []), ...(byFirst.data || [])]) {
+        if (seen.has(p.id) || norm(p.psu_id) === id) continue;
+        const sameFirst = norm(p.first_name) === norm(first);
+        const sameLast = norm(p.last_name) === norm(last);
+        if ((sameFirst && sameLast) || ((sameFirst || sameLast) && close(p)))
+          seen.set(p.id, p);
+      }
+      return [...seen.values()].slice(0, 3);
+    } catch (e) {
+      console.error("duplicate check failed", e);
+      return [];
+    }
+  }
+
+  // Only show enough of another person's ID to recognise your own.
+  function maskId(v) {
+    const t = (v || "").toLowerCase();
+    return t.length <= 4 ? t : `${t.slice(0, 3)}${"•".repeat(Math.max(1, t.length - 5))}${t.slice(-2)}`;
+  }
+
+  async function confirmDuplicate(p) {
+    if (submitting) return;
+    if (attendedIds.has(p.id)) {
+      setFormError(`${p.first_name} is already checked in to this event.`);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await checkIn(p.id); // existing record untouched; only attendance added
+      showSuccess(p.first_name, !p.photo_path);
+      resetForm();
+    } catch (e) {
+      setFormError(e.message || "Check-in failed.");
+      setSubmitting(false);
+    }
   }
 
   // Canonicalisation is done by the database function, never re-implemented
@@ -340,7 +412,7 @@ export default function Kiosk() {
     return MAJORS.find((m) => m.toLowerCase() === typed) || "";
   }
 
-  async function handleSubmitNew() {
+  async function handleSubmitNew(skipDupCheck = false) {
     if (submitting) return;
     const raw = psuId.trim();
     const pickedMajor = resolveMajor();
@@ -364,6 +436,19 @@ export default function Kiosk() {
     setFormError("");
     if (!major) setMajor(pickedMajor);
     setSubmitting(true);
+    if (!skipDupCheck) {
+      const matches = await findLikelyDuplicates(
+        firstName.trim(),
+        lastName.trim(),
+        canonical || raw,
+      );
+      if (matches.length) {
+        setDupMatches(matches);
+        setStep("dupe");
+        setSubmitting(false);
+        return;
+      }
+    }
     try {
       // The trigger canonicalises psu_id and sets psu_id_unverified on write.
       let { data: pnm, error } = await supabase
@@ -624,6 +709,62 @@ export default function Kiosk() {
                   </div>
                 )}
 
+                {step === "dupe" && (
+                  <div className="k-step" role="group" aria-labelledby="k-dupe-title">
+                    <p className="k-dupe-title" id="k-dupe-title">
+                      Are you already registered?
+                    </p>
+                    <p className="k-hint">
+                      We found someone with a similar name or user ID. If one of
+                      these is you, choose it so you aren't registered twice.
+                    </p>
+                    <ul className="k-dupe-list">
+                      {dupMatches.map((p) => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            className="k-dupe-opt"
+                            onClick={() => confirmDuplicate(p)}
+                            disabled={submitting}
+                          >
+                            <span className="k-dupe-name">
+                              {p.first_name} {p.last_name}
+                            </span>
+                            <span className="k-dupe-meta">
+                              {maskId(p.psu_id)} · {p.major || "—"} · {p.year || "—"}
+                            </span>
+                            <span className="k-dupe-cta">That's me</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    {formError && (
+                      <p className="k-error" role="alert">
+                        {formError}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className="q-btn q-btn-secondary q-btn-block k-btn"
+                      onClick={() => handleSubmitNew(true)}
+                      disabled={submitting}
+                      aria-busy={submitting}
+                    >
+                      {submitting
+                        ? "Checking in…"
+                        : `No, I'm new. Register ${canonical || psuId.trim()}`}
+                    </button>
+                    <button
+                      type="button"
+                      className="q-btn q-btn-quiet"
+                      onClick={editId}
+                      disabled={submitting}
+                    >
+                      Edit my ID
+                    </button>
+                  </div>
+                )}
+
                 {step === "form" && (
                   <form
                     className="k-step"
@@ -633,6 +774,20 @@ export default function Kiosk() {
                       handleSubmitNew();
                     }}
                   >
+                    <div className="k-registering">
+                      <span>
+                        Registering as{" "}
+                        <strong>{canonical || psuId.trim()}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        className="q-btn q-btn-quiet k-edit-id"
+                        onClick={editId}
+                        disabled={submitting}
+                      >
+                        Edit ID
+                      </button>
+                    </div>
                     <div className="k-grid2">
                       <label className="q-field">
                         <span className="k-label">First name</span>
