@@ -7,10 +7,12 @@ import {
   getEventId,
   getEventLabel,
   getStationId,
+  getSide,
   getSideLabel,
-  changeStationEvent,
+  saveStation,
   signOutStation,
 } from "../components/AuthGate";
+import Sheet from "../components/Sheet";
 import "../queue.css";
 
 const BUCKET = "pnm-photos";
@@ -56,6 +58,15 @@ export default function Queue({ side }) {
   const [removeError, setRemoveError] = useState(null);
   const [removingId, setRemovingId] = useState(null);
   const [announce, setAnnounce] = useState("");
+  const [pendingRemove, setPendingRemove] = useState(null); // { id, name }
+  const [stationOpen, setStationOpen] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [events, setEvents] = useState(null); // null = not loaded yet
+  const [eventsError, setEventsError] = useState(false);
+  const [formStation, setFormStation] = useState("");
+  const [formSide, setFormSide] = useState("");
+  const [formEvent, setFormEvent] = useState(null); // { id, label }
+  const [formError, setFormError] = useState("");
   const navigate = useNavigate();
   const canFullscreen =
     typeof document !== "undefined" &&
@@ -231,15 +242,22 @@ export default function Queue({ side }) {
 
   // Removes the check-in for THIS event only. The pnms row and any photo are
   // left alone -- the person still exists and may have attended other nights.
-  async function deleteAttendance(attendanceId, name) {
-    if (!confirm(`Remove ${name} from this event's check-in list?`)) return;
+  // Opens our own confirm sheet; the delete runs from confirmRemove().
+  function deleteAttendance(attendanceId, name) {
     setRemoveError(null);
+    setPendingRemove({ id: attendanceId, name });
+  }
+
+  async function confirmRemove() {
+    if (!pendingRemove || removingId) return;
+    const { id: attendanceId, name } = pendingRemove;
     setRemovingId(attendanceId);
     const { error } = await supabase
       .from("attendance")
       .delete()
       .eq("id", attendanceId);
     setRemovingId(null);
+    setPendingRemove(null);
     if (error) {
       setRemoveError(`Couldn't remove ${name}: ${error.message}`);
       setAnnounce(`Remove failed for ${name}.`);
@@ -247,6 +265,46 @@ export default function Queue({ side }) {
       setAnnounce(`${name} removed from the ${side} queue.`);
     }
     load();
+  }
+
+  async function openStation() {
+    setFormStation(getStationId() === "unnamed" ? "" : getStationId());
+    setFormSide(getSide() || side);
+    setFormEvent(eventId ? { id: eventId, label: getEventLabel() } : null);
+    setFormError("");
+    setConfirmSignOut(false);
+    setStationOpen(true);
+    const { data, error } = await supabase
+      .from("rush_events")
+      .select("id, label, iso_date")
+      .order("iso_date", { ascending: true });
+    if (error) {
+      setEventsError(true);
+      return;
+    }
+    setEventsError(false);
+    setEvents(data || []);
+  }
+
+  function saveStationForm() {
+    if (!formStation.trim()) return setFormError("Name this station.");
+    if (!formSide) return setFormError("Pick a side.");
+    if (!formEvent) return setFormError("Pick an event.");
+    const eventChanged = formEvent.id !== eventId;
+    saveStation({
+      eventId: formEvent.id,
+      eventLabel: formEvent.label,
+      station: formStation,
+      side: formSide,
+    });
+    setStationOpen(false);
+    if (eventChanged) {
+      setAllRows([]);
+      setLoading(true);
+    }
+    setAnnounce("Station settings saved.");
+    // Same route if the side is unchanged; the effect keyed on eventId reloads.
+    navigate(`/queue/${formSide}`, { replace: true });
   }
 
   const waiting = rows.filter((r) => !r.pnms?.photo_path);
@@ -277,6 +335,14 @@ export default function Queue({ side }) {
               </span>
               <span>Photo queue</span>
             </span>
+            <button
+              type="button"
+              className="q-station-btn"
+              onClick={openStation}
+              aria-haspopup="dialog"
+            >
+              <span aria-hidden="true">⚙</span> Station
+            </button>
           </div>
           <h1 className="q-event">{getEventLabel()}</h1>
           <p className="q-station">
@@ -522,53 +588,212 @@ export default function Queue({ side }) {
           </section>
         )}
 
-        <details className="q-settings">
-          <summary>
-            Station settings &amp; kiosk
-            <span className="q-chevron" aria-hidden="true">
-              ▾
-            </span>
-          </summary>
-          <div className="q-settings-body">
-            <p className="q-settings-row">
-              {getEventLabel()} · Station {getStationId()} · {getSideLabel()}{" "}
-              side
+      </main>
+
+      <Sheet
+        open={!!pendingRemove}
+        onClose={() => setPendingRemove(null)}
+        title={pendingRemove ? `Remove ${pendingRemove.name}?` : ""}
+        role="alertdialog"
+        busy={!!removingId}
+      >
+        <p className="q-sheet-text">
+          This removes their check-in for {getEventLabel()} only. Their profile
+          and any photo stay.
+        </p>
+        <div className="q-sheet-actions">
+          <button
+            type="button"
+            className="q-btn q-btn-danger q-btn-block q-btn-lg"
+            onClick={confirmRemove}
+            disabled={!!removingId}
+            aria-busy={!!removingId}
+          >
+            {removingId ? "Removing…" : "Yes, remove"}
+          </button>
+          <button
+            type="button"
+            className="q-btn q-btn-secondary q-btn-block q-btn-lg"
+            onClick={() => setPendingRemove(null)}
+            disabled={!!removingId}
+            data-autofocus
+          >
+            Cancel
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={stationOpen}
+        onClose={() => setStationOpen(false)}
+        title={confirmSignOut ? "Sign this station out?" : "Station settings"}
+      >
+        {confirmSignOut ? (
+          <>
+            <p className="q-sheet-text">
+              You'll need the shared kiosk login to sign back in.
             </p>
-            <Link to="/kiosk" className="q-btn q-btn-navy q-btn-block">
-              Open sign-in kiosk
-            </Link>
-            <button
-              type="button"
-              className="q-btn q-btn-secondary q-btn-block"
-              onClick={changeStationEvent}
-            >
-              Change event
-            </button>
-            {canFullscreen ? (
+            <div className="q-sheet-actions">
+              <button
+                type="button"
+                className="q-btn q-btn-danger q-btn-block q-btn-lg"
+                onClick={signOutStation}
+              >
+                Yes, sign out
+              </button>
+              <button
+                type="button"
+                className="q-btn q-btn-secondary q-btn-block q-btn-lg"
+                onClick={() => setConfirmSignOut(false)}
+                data-autofocus
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="q-form">
+            <label className="q-field">
+              <span className="q-field-label">Station name</span>
+              <input
+                className="q-input"
+                value={formStation}
+                onChange={(e) => {
+                  setFormStation(e.target.value);
+                  setFormError("");
+                }}
+                placeholder="e.g. Front table 1"
+                autoComplete="off"
+              />
+            </label>
+
+            <fieldset className="q-field">
+              <legend className="q-field-label">Side</legend>
+              <div className="q-seg">
+                {["left", "right"].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className={`q-seg-btn ${formSide === s ? "is-active" : ""}`}
+                    aria-pressed={formSide === s}
+                    onClick={() => {
+                      setFormSide(s);
+                      setFormError("");
+                    }}
+                  >
+                    {s === "left" ? "Left" : "Right"}
+                  </button>
+                ))}
+              </div>
+              <span className="q-field-hint">
+                Sign-in laptops and the photographer on the same side must
+                match.
+              </span>
+            </fieldset>
+
+            <fieldset className="q-field">
+              <legend className="q-field-label">Event</legend>
+              {eventsError ? (
+                <div className="q-alert" role="alert">
+                  <span className="q-alert-msg">Couldn't load events.</span>
+                  <button
+                    type="button"
+                    className="q-btn q-btn-secondary"
+                    onClick={openStation}
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : events === null ? (
+                <span className="q-field-hint">Loading events…</span>
+              ) : events.length === 0 ? (
+                <span className="q-field-hint">No events found.</span>
+              ) : (
+                <div className="q-options">
+                  {events.map((ev) => {
+                    const tonight =
+                      ev.iso_date === new Date().toLocaleDateString("en-CA");
+                    const sel = formEvent?.id === ev.id;
+                    return (
+                      <button
+                        key={ev.id}
+                        type="button"
+                        className={`q-option ${sel ? "is-active" : ""}`}
+                        aria-pressed={sel}
+                        onClick={() => {
+                          setFormEvent({ id: ev.id, label: ev.label });
+                          setFormError("");
+                        }}
+                      >
+                        <span className="q-option-label">{ev.label}</span>
+                        <span className="q-option-meta">
+                          {tonight ? `Tonight · ${ev.iso_date}` : ev.iso_date || "no date"}
+                        </span>
+                        {sel && (
+                          <span className="q-option-check" aria-hidden="true">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </fieldset>
+
+            {formError && (
+              <div className="q-alert" role="alert">
+                <span className="q-alert-msg">{formError}</span>
+              </div>
+            )}
+
+            <div className="q-sheet-actions">
+              <button
+                type="button"
+                className="q-btn q-btn-primary q-btn-block q-btn-lg"
+                onClick={saveStationForm}
+              >
+                Save
+              </button>
               <button
                 type="button"
                 className="q-btn q-btn-secondary q-btn-block"
-                onClick={toggleFullscreen}
-                aria-pressed={isFullscreen}
+                onClick={() => setStationOpen(false)}
               >
-                {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                Cancel
               </button>
-            ) : (
-              <p className="q-settings-note">
-                Fullscreen isn't available in this browser (iPhone Safari
-                doesn't support it).
-              </p>
-            )}
-            <button
-              type="button"
-              className="q-btn q-btn-secondary q-btn-block"
-              onClick={signOutStation}
-            >
-              Sign out this station
-            </button>
+            </div>
+
+            <div className="q-sheet-more">
+              <Link to="/kiosk" className="q-btn q-btn-navy q-btn-block">
+                Open sign-in kiosk
+              </Link>
+              {canFullscreen ? (
+                <button
+                  type="button"
+                  className="q-btn q-btn-secondary q-btn-block"
+                  onClick={toggleFullscreen}
+                  aria-pressed={isFullscreen}
+                >
+                  {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                </button>
+              ) : (
+                <p className="q-settings-note">
+                  Fullscreen isn't available in this browser (iPhone Safari
+                  doesn't support it).
+                </p>
+              )}
+              <button
+                type="button"
+                className="q-btn q-btn-quiet"
+                onClick={() => setConfirmSignOut(true)}
+              >
+                Sign out this station
+              </button>
+            </div>
           </div>
-        </details>
-      </main>
+        )}
+      </Sheet>
     </div>
   );
 }

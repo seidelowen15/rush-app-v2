@@ -34,15 +34,17 @@ export function clearEvent() {
   localStorage.removeItem(EVENT_LABEL);
 }
 
-// Same behavior as the kiosk top bar's "change event" and "Sign out", shared
-// so the photo queue's settings section does exactly the same thing.
-export function changeStationEvent() {
-  if (!confirm("Change event for this station?")) return;
-  clearEvent();
-  location.reload();
+// Used by the photo queue's Station settings sheet. Same storage keys the
+// setup screen writes, so the kiosk and queue stay on one event and side.
+export function saveStation({ eventId, eventLabel, station, side }) {
+  localStorage.setItem(EVENT_KEY, eventId);
+  localStorage.setItem(EVENT_LABEL, eventLabel);
+  localStorage.setItem(STATION_KEY, station.trim());
+  localStorage.setItem(SIDE_KEY, side);
 }
+// Same as the kiosk top bar's "Sign out", minus the browser confirm(): the
+// caller asks with its own dialog (Safari's popup proved unreliable).
 export async function signOutStation() {
-  if (!confirm("Sign this station out?")) return;
   clearEvent();
   localStorage.removeItem(STATION_KEY);
   localStorage.removeItem(SIDE_KEY);
