@@ -65,6 +65,36 @@ export default function Camera() {
     load();
   }, [targetPnmId, eventId]);
 
+  // The camera page had no realtime subscription, so new sign-ins and photos
+  // taken on other devices never appeared until a reload.
+  useEffect(() => {
+    if (!eventId) return;
+    const channel = supabase
+      .channel("attendance-camera")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "attendance",
+          filter: `event_id=eq.${eventId}`,
+        },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "attendance" },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "pnms" },
+        () => load(),
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [targetPnmId, eventId]);
+
   // Same iOS resume problem as the queue: re-pull when the page comes back
   // instead of making the photographer reload. Keyed on the same attendance
   // id, so a photo already captured on screen is not discarded.

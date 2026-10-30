@@ -190,15 +190,37 @@ export default function Kiosk() {
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "attendance",
           filter: `event_id=eq.${eventId}`,
         },
         () => load(),
       )
+      // DELETE events cannot be filtered in Supabase realtime.
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "attendance" },
+        () => load(),
+      )
+      // Photo saves write pnms.photo_path; without this the "Waiting for
+      // photo" count only moved when someone new signed in.
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "pnms" },
+        () => load(),
+      )
       .subscribe();
-    return () => supabase.removeChannel(channel);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+      supabase.removeChannel(channel);
+    };
   }, [eventId]);
 
   // Profile-block message clears itself so the next PNM isn't stuck
