@@ -95,6 +95,7 @@ export default function Kiosk() {
   const [major, setMajor] = useState("");
   const [majorSearch, setMajorSearch] = useState("");
   const [showMajorList, setShowMajorList] = useState(false);
+  const [majorNote, setMajorNote] = useState(""); // "Corrected to …"
   const [step, setStep] = useState("id");
   const [flash, setFlash] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -225,6 +226,7 @@ export default function Kiosk() {
     setSubmitting(false);
     setFormError("");
     setDupMatches([]);
+    setMajorNote("");
     focusId();
   }
 
@@ -406,10 +408,44 @@ export default function Kiosk() {
 
   // A major typed in full (any case) counts as picked; anything else must be
   // chosen from the list so majors stay consistent.
+  // Any major is accepted. A close misspelling of a listed major is
+  // corrected to the list spelling; anything else is kept as typed (tidied).
+  function correctMajor(input) {
+    const clean = (input || "").replace(/\s+/g, " ").trim();
+    if (!clean) return { value: "", corrected: false };
+    const key = (v) => v.toLowerCase().replace(/[^a-z0-9& ]/g, "");
+    const k = key(clean);
+    const exact = MAJORS.find((m) => key(m) === k);
+    if (exact) return { value: exact, corrected: false };
+    let best = null;
+    let bestD = Infinity;
+    for (const m of MAJORS) {
+      const d = levenshtein(k, key(m));
+      if (d < bestD) {
+        bestD = d;
+        best = m;
+      }
+    }
+    // Short words get less slack so "Art" isn't turned into something else.
+    const allow = k.length <= 5 ? 1 : k.length <= 10 ? 2 : 3;
+    if (best && bestD <= allow) return { value: best, corrected: true };
+    const value =
+      clean === clean.toLowerCase()
+        ? clean.replace(/\b[a-z]/g, (c) => c.toUpperCase())
+        : clean;
+    return { value, corrected: false };
+  }
+
+  function applyMajorCorrection() {
+    if (major || !majorSearch.trim()) return;
+    const r = correctMajor(majorSearch);
+    setMajor(r.value);
+    setMajorSearch("");
+    setMajorNote(r.corrected ? `Spelling corrected to ${r.value}.` : "");
+  }
+
   function resolveMajor() {
-    if (major) return major;
-    const typed = majorSearch.trim().toLowerCase();
-    return MAJORS.find((m) => m.toLowerCase() === typed) || "";
+    return major || correctMajor(majorSearch).value;
   }
 
   async function handleSubmitNew(skipDupCheck = false) {
@@ -420,21 +456,19 @@ export default function Kiosk() {
       !firstName.trim() && "first name",
       !lastName.trim() && "last name",
       !year && "year",
-      !pickedMajor && !majorSearch.trim() && "major",
+      !pickedMajor && "major",
     ].filter(Boolean);
     if (missing.length) {
       setFormError(`Add your ${missing.join(", ").replace(/, ([^,]*)$/, " and $1")}.`);
       return;
     }
-    if (!pickedMajor) {
-      setFormError(
-        `Pick your major from the list. If "${majorSearch.trim()}" isn't there, choose Other.`,
-      );
-      setShowMajorList(true);
-      return;
-    }
     setFormError("");
-    if (!major) setMajor(pickedMajor);
+    if (!major) {
+      const r = correctMajor(majorSearch);
+      setMajor(r.value);
+      setMajorSearch("");
+      if (r.corrected) setMajorNote(`Spelling corrected to ${r.value}.`);
+    }
     setSubmitting(true);
     if (!skipDupCheck) {
       const matches = await findLikelyDuplicates(
@@ -848,8 +882,10 @@ export default function Kiosk() {
                       onBlur={(e) => {
                         // Close the suggestions once focus leaves the field and
                         // its list, so they never sit on top of Submit.
-                        if (!e.currentTarget.contains(e.relatedTarget))
+                        if (!e.currentTarget.contains(e.relatedTarget)) {
                           setShowMajorList(false);
+                          applyMajorCorrection();
+                        }
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Escape") setShowMajorList(false);
@@ -865,16 +901,29 @@ export default function Kiosk() {
                         onChange={(e) => {
                           setMajorSearch(e.target.value);
                           setMajor("");
+                          setMajorNote("");
                           setShowMajorList(true);
                           setFormError("");
                         }}
                         onFocus={() => setShowMajorList(true)}
-                        placeholder="Search or type major..."
+                        placeholder="Type your major"
                         autoComplete="off"
-                        aria-expanded={showMajorList && (!!majorSearch || !major)}
+                        aria-expanded={
+                          showMajorList &&
+                          (!!majorSearch || !major) &&
+                          filteredMajors.length > 0
+                        }
                         aria-controls="k-major-list"
+                        aria-describedby={majorNote ? "k-major-note" : undefined}
                       />
-                      {showMajorList && (majorSearch || !major) && (
+                      {majorNote && (
+                        <p className="k-hint" id="k-major-note" role="status">
+                          {majorNote}
+                        </p>
+                      )}
+                      {showMajorList &&
+                        (majorSearch || !major) &&
+                        filteredMajors.length > 0 && (
                         <div className="k-major-list" id="k-major-list">
                           {filteredMajors.map((m) => (
                             <button
@@ -884,6 +933,7 @@ export default function Kiosk() {
                               onClick={() => {
                                 setMajor(m);
                                 setMajorSearch("");
+                                setMajorNote("");
                                 setShowMajorList(false);
                                 setFormError("");
                               }}
