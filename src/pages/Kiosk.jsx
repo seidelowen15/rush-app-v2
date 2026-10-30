@@ -105,6 +105,7 @@ export default function Kiosk() {
   const [canonical, setCanonical] = useState(null);
   const [existingPnm, setExistingPnm] = useState(null);
   const [checking, setChecking] = useState(false); // ID lookup in flight
+  const [formError, setFormError] = useState("");
   const [stationOpen, setStationOpen] = useState(false);
   const idRef = useRef(null);
   const flashTimer = useRef(null);
@@ -220,6 +221,7 @@ export default function Kiosk() {
     setCanonical(null);
     setExistingPnm(null);
     setSubmitting(false);
+    setFormError("");
     focusId();
   }
 
@@ -330,9 +332,37 @@ export default function Kiosk() {
     }
   }
 
+  // A major typed in full (any case) counts as picked; anything else must be
+  // chosen from the list so majors stay consistent.
+  function resolveMajor() {
+    if (major) return major;
+    const typed = majorSearch.trim().toLowerCase();
+    return MAJORS.find((m) => m.toLowerCase() === typed) || "";
+  }
+
   async function handleSubmitNew() {
+    if (submitting) return;
     const raw = psuId.trim();
-    if (!firstName.trim() || !lastName.trim() || !year || !major) return;
+    const pickedMajor = resolveMajor();
+    const missing = [
+      !firstName.trim() && "first name",
+      !lastName.trim() && "last name",
+      !year && "year",
+      !pickedMajor && !majorSearch.trim() && "major",
+    ].filter(Boolean);
+    if (missing.length) {
+      setFormError(`Add your ${missing.join(", ").replace(/, ([^,]*)$/, " and $1")}.`);
+      return;
+    }
+    if (!pickedMajor) {
+      setFormError(
+        `Pick your major from the list. If "${majorSearch.trim()}" isn't there, choose Other.`,
+      );
+      setShowMajorList(true);
+      return;
+    }
+    setFormError("");
+    if (!major) setMajor(pickedMajor);
     setSubmitting(true);
     try {
       // The trigger canonicalises psu_id and sets psu_id_unverified on write.
@@ -342,7 +372,7 @@ export default function Kiosk() {
           psu_id: raw,
           first_name: firstName.trim(),
           last_name: lastName.trim(),
-          major,
+          major: pickedMajor,
           year,
           source_event_id: eventId,
         })
@@ -609,7 +639,10 @@ export default function Kiosk() {
                         <input
                           className="k-input k-input-sm"
                           value={firstName}
-                          onChange={(e) => setFirstName(e.target.value)}
+                          onChange={(e) => {
+                            setFirstName(e.target.value);
+                            setFormError("");
+                          }}
                           placeholder="First"
                           autoComplete="off"
                           autoFocus
@@ -620,7 +653,10 @@ export default function Kiosk() {
                         <input
                           className="k-input k-input-sm"
                           value={lastName}
-                          onChange={(e) => setLastName(e.target.value)}
+                          onChange={(e) => {
+                            setLastName(e.target.value);
+                            setFormError("");
+                          }}
                           placeholder="Last"
                           autoComplete="off"
                         />
@@ -631,20 +667,39 @@ export default function Kiosk() {
                       <legend className="k-label">Year</legend>
                       <div className="k-years">
                         {YEARS.map((y) => (
-                          <button
+                          <label
                             key={y}
-                            type="button"
-                            className={`q-seg-btn ${year === y ? "is-active" : ""}`}
-                            aria-pressed={year === y}
-                            onClick={() => setYear(y)}
+                            className={`q-seg-btn q-radio-label ${year === y ? "is-active" : ""}`}
                           >
+                            <input
+                              type="radio"
+                              name="k-year"
+                              value={y}
+                              checked={year === y}
+                              onChange={() => {
+                                setYear(y);
+                                setFormError("");
+                              }}
+                              className="q-radio"
+                            />
                             {y}
-                          </button>
+                          </label>
                         ))}
                       </div>
                     </fieldset>
 
-                    <div className="q-field k-major">
+                    <div
+                      className="q-field k-major"
+                      onBlur={(e) => {
+                        // Close the suggestions once focus leaves the field and
+                        // its list, so they never sit on top of Submit.
+                        if (!e.currentTarget.contains(e.relatedTarget))
+                          setShowMajorList(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setShowMajorList(false);
+                      }}
+                    >
                       <label className="k-label" htmlFor="k-major">
                         Major
                       </label>
@@ -656,6 +711,7 @@ export default function Kiosk() {
                           setMajorSearch(e.target.value);
                           setMajor("");
                           setShowMajorList(true);
+                          setFormError("");
                         }}
                         onFocus={() => setShowMajorList(true)}
                         placeholder="Search or type major..."
@@ -674,6 +730,7 @@ export default function Kiosk() {
                                 setMajor(m);
                                 setMajorSearch("");
                                 setShowMajorList(false);
+                                setFormError("");
                               }}
                             >
                               {m}
@@ -683,16 +740,15 @@ export default function Kiosk() {
                       )}
                     </div>
 
+                    {formError && (
+                      <p className="k-error" role="alert">
+                        {formError}
+                      </p>
+                    )}
                     <button
                       type="submit"
                       className="q-btn q-btn-primary q-btn-block k-btn"
-                      disabled={
-                        submitting ||
-                        !firstName.trim() ||
-                        !lastName.trim() ||
-                        !year ||
-                        !major
-                      }
+                      disabled={submitting}
                       aria-busy={submitting}
                     >
                       {submitting ? "Submitting…" : "Submit & check in"}

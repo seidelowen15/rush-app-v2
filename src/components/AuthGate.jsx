@@ -235,6 +235,19 @@ export default function AuthGate({ children }) {
   }
 
   async function signIn() {
+    if (busy) return;
+    if (!email.trim() && !password) {
+      setError("Enter the kiosk account email and password.");
+      return;
+    }
+    if (!email.trim()) {
+      setError("Enter the kiosk account email.");
+      return;
+    }
+    if (!password) {
+      setError("Enter the password.");
+      return;
+    }
     setError("");
     setBusy(true);
     try {
