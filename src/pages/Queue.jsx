@@ -43,6 +43,7 @@ export default function Queue({ side }) {
   const [toasts, setToasts] = useState([]);
   const [newIds, setNewIds] = useState(new Set());
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const navigate = useNavigate();
 
   const fullName = (p) => (p ? `${p.first_name} ${p.last_name}` : "?");
@@ -170,8 +171,18 @@ export default function Queue({ side }) {
       )
       .subscribe();
     const poll = setInterval(() => load(), 10 * 60 * 1000);
+    // iOS suspends the tab (and its realtime socket) when the phone locks or
+    // switches apps. Re-pull the moment the page is visible again so the queue
+    // is current without a page reload.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
     return () => {
       clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
       supabase.removeChannel(channel);
     };
   }, [eventId, side]);
@@ -244,6 +255,27 @@ export default function Queue({ side }) {
               <div className="stat-label">Waiting for photo</div>
             </div>
           </div>
+          <button
+            onClick={async () => {
+              setRefreshing(true);
+              await load();
+              setRefreshing(false);
+            }}
+            disabled={refreshing}
+            style={{
+              marginLeft: 12,
+              whiteSpace: "nowrap",
+              background: "var(--navy)",
+              color: "rgba(255,255,255,0.7)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              padding: "8px 12px",
+              borderRadius: "var(--radius)",
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            {refreshing ? "Refreshing…" : "↻ Refresh"}
+          </button>
           <button
             className="fullscreen-btn"
             onClick={toggleFullscreen}
