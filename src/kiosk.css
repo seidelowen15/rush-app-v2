@@ -27,10 +27,7 @@
 }
 .k-brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .k-mark {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 38px;
-  line-height: 1;
-  letter-spacing: 0.04em;
+  font-size: 30px;
   color: var(--gold);
 }
 .k-sep { width: 1px; height: 32px; background: rgba(255, 255, 255, 0.35); }
@@ -252,7 +249,7 @@
 /* Phone fallback */
 @media (max-width: 600px) {
   .k-header { min-height: 60px; padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right)); }
-  .k-mark { font-size: 28px; }
+  .k-mark { font-size: 24px; }
   .k-sep { height: 24px; }
   .k-brand { gap: 10px; }
   .k-appname { font-size: 18px; }

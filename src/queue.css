@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:wght@800&display=swap');
+
 /* ── Photo queue + camera (phone-first) ─────────────────────────────────
    Scoped under .q-page so the sign-in kiosk keeps index.css untouched.
    Brand colors come from index.css (--navy / --gold), so each branch keeps
@@ -66,13 +68,19 @@
   color: rgba(255, 255, 255, 0.78);
 }
 .q-brandrow-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.q-mark {
-  font-family: 'Bebas Neue', sans-serif;
-  font-size: 22px;
+/* Chapter letters (AKΨ / ΦΒΛ). Bebas Neue has no Greek glyphs, so Greek
+   letters fell back to another font; Noto Serif covers Latin and Greek in
+   one heavy serif, close to the printed letters. */
+.brand-mark {
+  font-family: 'Noto Serif', Georgia, 'Times New Roman', serif;
+  font-weight: 800;
   line-height: 1;
-  letter-spacing: 0.05em;
-  color: var(--gold);
+  letter-spacing: 0.01em;
   text-transform: none;
+}
+.q-mark {
+  font-size: 20px;
+  color: var(--gold);
 }
 .q-back {
   display: inline-flex;
